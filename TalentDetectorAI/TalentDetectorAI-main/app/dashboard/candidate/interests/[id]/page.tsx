@@ -5,6 +5,28 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2, AlertCircle, ArrowLeft, FileText } from 'lucide-react'
 
+function getStatusMessage(interest: any) {
+  if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
+    return "[translate:Please review the job and respond with your acceptance or decline.]"
+  }
+  if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
+    return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
+  }
+  if (
+    interest.status === 'not_interested' ||
+    interest.status === 'rejected'
+  ) {
+    return "[translate:You have declined this opportunity.]"
+  }
+  if (interest.status === 'rtr_ready') {
+    return "[translate:Your Right to Represent agreement is ready to sign.]"
+  }
+  if (interest.status === 'pending_agency_action') {
+    return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
+  }
+  return ""
+}
+
 export default function CandidateInterestDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true)
   const [interest, setInterest] = useState<any>(null)
@@ -90,6 +112,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
   const job = interest.jobs
   const candidate = interest.candidates
+  const statusMsg = getStatusMessage(interest)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-8">
@@ -110,8 +133,17 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             <strong>Your Name:</strong> {candidate?.name}<br />
             <strong>Your Email:</strong> {candidate?.email}
           </div>
-          {interest.right_to_represent_url ? (
-            <div className="bg-purple-50 p-6 rounded-xl text-center">
+          
+          {/* Enhanced status display */}
+          {statusMsg && (
+            <div className="mb-6 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800">
+              {statusMsg}
+            </div>
+          )}
+
+          {/* RTR Available Banner */}
+          {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
+            <div className="bg-purple-50 p-6 rounded-xl text-center mb-6">
               <h2 className="font-bold text-xl mb-4">Right to Represent Agreement Available</h2>
               <a
                 href={interest.right_to_represent_url}
@@ -121,10 +153,8 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                 <FileText className="inline w-6 h-6 mr-2" />
                 View / Download RTR
               </a>
-              {/* You can add your e-sign flow below */}
+              {/* You can add your e-sign flow here */}
             </div>
-          ) : (
-            <div className="text-amber-600 font-semibold py-6">This opportunity is pending agency action.</div>
           )}
         </div>
       </div>
