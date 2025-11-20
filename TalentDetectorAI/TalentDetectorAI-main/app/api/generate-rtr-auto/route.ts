@@ -2,21 +2,16 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 30 // Vercel timeout
 
 export async function POST(request: Request) {
-  console.log('=== RTR GENERATION API CALLED ===')
+  const startTime = Date.now()
   
   try {
-    const body = await request.json()
-    const { interestId } = body
-
-    console.log('Interest ID:', interestId)
+    const { interestId } = await request.json()
 
     if (!interestId) {
-      return NextResponse.json(
-        { error: 'Interest ID required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Interest ID required' }, { status: 400 })
     }
 
     const supabaseAdmin = createClient(
@@ -30,55 +25,153 @@ export async function POST(request: Request) {
       }
     )
 
-    // Fetch interest data
-    console.log('Fetching interest data...')
+    // Fetch interest with all related data
     const { data: interest, error: fetchError } = await supabaseAdmin
       .from('candidate_interests')
       .select(`
         *,
         candidates(id, name, email, phone, location, user_id),
-        jobs(id, title, location, salary_min, salary_max, employment_type),
+        jobs(id, title, location, salary_min, salary_max, employment_type, company),
         profiles!candidate_interests_agency_id_fkey(id, full_name, company, email, phone)
       `)
       .eq('id', interestId)
       .single()
 
-    if (fetchError) {
-      console.error('Fetch error:', fetchError)
-      return NextResponse.json({ error: fetchError.message }, { status: 500 })
+    if (fetchError || !interest) {
+      throw new Error(`Interest not found: ${fetchError?.message}`)
     }
 
-    if (!interest) {
-      return NextResponse.json({ error: 'Interest not found' }, { status: 404 })
+    const { candidates: candidate, jobs: job, profiles: agency } = interest
+
+    // Generate RTR content
+    const rtrContent = generateRTRContent(interest, candidate, job, agency)
+
+    // Upload to storage
+    const fileName = `rtr_${interestId}_${Date.now()}.txt`
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('documents')
+      .upload(fileName, rtrContent, {
+        contentType: 'text/plain',
+        upsert: false,
+        cacheControl: '3600'
+      })
+
+    if (uploadError) {
+      throw new Error(`Upload failed: ${uploadError.message}`)
     }
 
-    console.log('Interest found:', interest.id)
-    console.log('Candidate:', interest.candidates?.name)
-    console.log('Job:', interest.jobs?.title)
+    // Get public URL
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('documents')
+      .getPublicUrl(fileName)
 
-    const candidate = interest.candidates
-    const job = interest.jobs
-    const agency = interest.profiles
+    // Update interest record
+    const { error: updateError } = await supabaseAdmin
+      .from('candidate_interests')
+      .update({
+        right_to_represent_url: publicUrl,
+        status: 'rtr_ready',
+        agency_notes: `RTR generated on ${new Date().toISOString()}`
+      })
+      .eq('id', interestId)
 
-    // Generate RTR document
-    const rtrContent = `
+    if (updateError) {
+      throw new Error(`Update failed: ${updateError.message}`)
+    }
+
+    // Send notifications
+    await Promise.all([
+      // Notify candidate
+      candidate.user_id && supabaseAdmin.from('notifications').insert({
+        user_id: candidate.user_id,
+        type: 'rtr_ready',
+        title: '✍️ Document Ready for Signature',
+        message: `Your Right-to-Represent agreement for "${job.title}" is ready`,
+        link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,
+        ai_priority: 'high',
+        metadata: { interest_id: interestId, job_title: job.title }
+      }),
+      
+      // Notify agency
+      supabaseAdmin.from('notifications').insert({
+        user_id: interest.agency_id,
+        type: 'rtr_generated',
+        title: '📄 RTR Generated',
+        message: `RTR sent to ${candidate.name} for signature`,
+        link: `/dashboard/agency/interests`,
+        ai_priority: 'normal',
+        metadata: { interest_id: interestId, candidate_name: candidate.name }
+      })
+    ])
+
+    // Mark queue job as completed
+    await supabaseAdmin
+      .from('rtr_generation_queue')
+      .update({
+        status: 'completed',
+        processed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('interest_id', interestId)
+
+    const duration = Date.now() - startTime
+
+    return NextResponse.json({
+      success: true,
+      rtr_url: publicUrl,
+      duration_ms: duration,
+      candidate_notified: !!candidate.user_id
+    })
+
+  } catch (error: any) {
+    console.error('RTR Generation Error:', error)
+
+    // Update queue with error
+    if (request.body) {
+      const { interestId } = await request.json()
+      const supabaseAdmin = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+
+      await supabaseAdmin
+        .from('rtr_generation_queue')
+        .update({
+          status: 'failed',
+          error_message: error.message,
+          attempts: supabaseAdmin.rpc('increment_attempts', { queue_id: interestId }),
+          updated_at: new Date().toISOString()
+        })
+        .eq('interest_id', interestId)
+    }
+
+    return NextResponse.json(
+      { error: error.message || 'RTR generation failed' },
+      { status: 500 }
+    )
+  }
+}
+
+function generateRTRContent(interest: any, candidate: any, job: any, agency: any): string {
+  return `
 ═══════════════════════════════════════════════════════════════
-           RIGHT TO REPRESENT AGREEMENT
-           Powered by TalentDetector AI
+              RIGHT TO REPRESENT AGREEMENT
+              Powered by TalentDetector AI
 ═══════════════════════════════════════════════════════════════
 
 Document ID: ${interest.id}
-Generated: ${new Date().toLocaleString()}
-AI Match Score: ${interest.ai_match_score || 0}%
+Generated: ${new Date().toLocaleString('en-GB', { timeZone: 'UTC' })}
+AI Match Score: ${interest.ai_match_score || 'N/A'}%
 
 ═══════════════════════════════════════════════════════════════
 
-PARTIES TO THIS AGREEMENT:
+PARTIES TO THIS AGREEMENT
 
 📋 RECRUITMENT AGENCY
    Name: ${agency.full_name}
    Company: ${agency.company || 'Not specified'}
    Email: ${agency.email}
+   Phone: ${agency.phone || 'Not specified'}
 
 👤 CANDIDATE
    Name: ${candidate.name}
@@ -86,9 +179,11 @@ PARTIES TO THIS AGREEMENT:
    Phone: ${candidate.phone || 'Not specified'}
    Location: ${candidate.location || 'Not specified'}
 
-💼 POSITION
+💼 POSITION DETAILS
    Title: ${job.title}
+   Company: ${job.company || 'Not specified'}
    Location: ${job.location}
+   Employment Type: ${job.employment_type || 'Not specified'}
    Salary Range: £${job.salary_min?.toLocaleString()} - £${job.salary_max?.toLocaleString()}
 
 ═══════════════════════════════════════════════════════════════
@@ -96,137 +191,60 @@ PARTIES TO THIS AGREEMENT:
 AGREEMENT TERMS
 
 1. EXCLUSIVE REPRESENTATION
-   The Candidate grants the Agency exclusive right to represent them 
-   for the position of "${job.title}" for 90 days.
+   The Candidate grants the Agency exclusive right to represent them
+   for the position of "${job.title}" for a period of 90 days from
+   the date of signing this agreement.
 
 2. SCOPE OF REPRESENTATION
    ✓ Agency may submit Candidate's CV to the hiring company
-   ✓ Agency serves as intermediary for communications
+   ✓ Agency serves as primary intermediary for all communications
    ✓ Candidate will not apply directly during representation period
+   ✓ Agency will keep Candidate informed of application progress
 
 3. CANDIDATE OBLIGATIONS
-   ✓ Provide accurate information
+   ✓ Provide accurate and complete information
    ✓ Respond to communications within 48 hours
    ✓ Participate in scheduled interviews
+   ✓ Notify Agency of any direct contact with hiring company
 
 4. AGENCY OBLIGATIONS
-   ✓ Present qualifications professionally
-   ✓ Keep Candidate informed of progress
-   ✓ Maintain confidentiality
+   ✓ Present Candidate's qualifications professionally
+   ✓ Maintain confidentiality of personal information
+   ✓ Provide timely updates on application status
+   ✓ Act in Candidate's best interests
 
-5. PLACEMENT & COMPENSATION
+5. FEES & COMPENSATION
    ✓ No fee charged to Candidate
-   ✓ Agency receives commission from hiring company (10-25%)
+   ✓ Agency receives commission from hiring company (typically 10-25%)
+   ✓ Candidate's salary unaffected by agency fee
+
+6. TERMINATION
+   Either party may terminate with 7 days written notice.
+   Existing applications remain under agreement terms.
+
+7. DATA PROTECTION
+   Both parties comply with UK GDPR and Data Protection Act 2018.
 
 ═══════════════════════════════════════════════════════════════
 
 ELECTRONIC SIGNATURE ACKNOWLEDGMENT
 
-By signing, both parties acknowledge they have read and agree to 
-all terms. Electronic signature has same legal effect as handwritten.
+By signing below, both parties acknowledge they have read, understood,
+and agree to all terms of this agreement. Electronic signatures have
+the same legal effect as handwritten signatures under the Electronic
+Communications Act 2000.
 
 Candidate Signature: _____________________________
 
 Date: ___________________________________________
 
+IP Address: (Recorded at time of signature)
+
 ═══════════════════════════════════════════════════════════════
 
 Generated by TalentDetector AI
 © ${new Date().getFullYear()} TalentDetector. All rights reserved.
+
+This is a legally binding document. Keep a copy for your records.
 `.trim()
-
-    console.log('Uploading RTR document...')
-    const fileName = `rtr_${interestId}_${Date.now()}.txt`
-    
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from('documents')
-      .upload(fileName, rtrContent, {
-        contentType: 'text/plain',
-        upsert: false
-      })
-
-    if (uploadError) {
-      console.error('Upload error:', uploadError)
-      return NextResponse.json({ error: uploadError.message }, { status: 500 })
-    }
-
-    const { data: { publicUrl } } = supabaseAdmin.storage
-      .from('documents')
-      .getPublicUrl(fileName)
-
-    console.log('RTR uploaded to:', publicUrl)
-
-    // Update interest
-    console.log('Updating interest...')
-    const { error: updateError } = await supabaseAdmin
-      .from('candidate_interests')
-      .update({
-        right_to_represent_url: publicUrl,
-        agency_notes: `RTR generated on ${new Date().toISOString()}`
-      })
-      .eq('id', interestId)
-
-    if (updateError) {
-      console.error('Update error:', updateError)
-      return NextResponse.json({ error: updateError.message }, { status: 500 })
-    }
-
-    // Send notification to candidate
-    if (candidate.user_id) {
-      console.log('Sending notification to candidate...')
-      const { error: notifError } = await supabaseAdmin
-        .from('notifications')
-        .insert({
-          user_id: candidate.user_id,
-          type: 'rtr_ready_signature',
-          title: '✍️ E-Signature Required',
-          message: `Your Right-to-Represent agreement for "${job.title}" is ready for signature`,
-          link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,
-          action_type: 'sign_document',
-          ai_priority: 'high',
-          metadata: {
-            interest_id: interestId,
-            job_title: job.title
-          }
-        })
-
-      if (notifError) {
-        console.error('Notification error:', notifError)
-      } else {
-        console.log('Notification sent to candidate')
-      }
-    }
-
-    // Notify agency
-    console.log('Sending notification to agency...')
-    await supabaseAdmin.from('notifications').insert({
-      user_id: interest.agency_id,
-      type: 'rtr_sent_for_signature',
-      title: '📄 RTR Sent to Candidate',
-      message: `${candidate.name} has been sent the RTR agreement`,
-      link: `/dashboard/agency/interests/${interestId}`,
-      ai_priority: 'normal',
-      metadata: {
-        interest_id: interestId,
-        candidate_name: candidate.name
-      }
-    })
-
-    console.log('=== RTR GENERATION COMPLETE ===')
-
-    return NextResponse.json({
-      success: true,
-      rtr_url: publicUrl,
-      message: 'RTR generated and sent successfully',
-      candidate_notified: !!candidate.user_id
-    })
-
-  } catch (error: any) {
-    console.error('=== RTR GENERATION ERROR ===')
-    console.error(error)
-    return NextResponse.json(
-      { error: error.message || 'Failed to generate RTR' },
-      { status: 500 }
-    )
-  }
 }
