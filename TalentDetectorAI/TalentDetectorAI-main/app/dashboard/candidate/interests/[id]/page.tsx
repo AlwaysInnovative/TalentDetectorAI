@@ -291,3 +291,94 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                 className="block w-full border-2 border-gray-300 rounded-lg px-4 py-2 mb-4"
               />
               <button
+                onClick={handleUploadCv}
+                disabled={!cvFile || uploadingCv}
+                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {uploadingCv ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5" />
+                    Upload CV
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {interest.cv_url && (
+            <div className="mb-8 p-6 bg-green-50 rounded-xl border-2 border-green-300">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-8 h-8 text-green-600" />
+                  <div>
+                    <h3 className="font-bold text-gray-900">CV Uploaded</h3>
+                    <p className="text-sm text-gray-600">{interest.cv_filename}</p>
+                  </div>
+                </div>
+                <a
+                  href={interest.cv_url}
+                  target="_blank"
+                  download
+                  className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition"
+                >
+                  <Download className="w-5 h-5" />
+                  Download
+                </a>
+              </div>
+            </div>
+          )}
+
+          {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
+            <div className="mb-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
+              <textarea
+                rows={3}
+                value={responseComment}
+                onChange={e => setResponseComment(e.target.value)}
+                className="w-full border-2 border-gray-300 rounded-lg p-4 mb-4 focus:border-blue-500 focus:outline-none"
+                placeholder="Add any comments or questions (optional)..."
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => handleRespond(false)}
+                  disabled={responding}
+                  className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
+                >
+                  {responding ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsDown className="w-6 h-6" />}
+                  Decline
+                </button>
+                <button
+                  onClick={() => handleRespond(true)}
+                  disabled={responding}
+                  className="px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
+                >
+                  {responding ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsUp className="w-6 h-6" />}
+                  Accept
+                </button>
+              </div>
+            </div>
+          )}
+
+          {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
+            <div className="p-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-2xl text-center shadow-2xl">
+              <h2 className="text-2xl font-bold mb-4">Right to Represent Agreement Ready</h2>
+              <p className="mb-6">Your RTR document is ready for review and signature</p>
+              <a
+                href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}
+                className="inline-flex items-center gap-2 px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:shadow-xl transition"
+              >
+                <FileText className="w-6 h-6" />
+                Review & Sign RTR
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
