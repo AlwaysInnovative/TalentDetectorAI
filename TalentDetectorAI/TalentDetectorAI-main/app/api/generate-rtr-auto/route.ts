@@ -6,79 +6,118 @@ export const maxDuration = 30
 
 function generateRTRContent(interest: any, candidate: any, job: any, agency: any): string {
   return `
-═══════════════════════════════════════════════════════════════
-              RIGHT TO REPRESENT AGREEMENT
-              Powered by TalentDetector AI
-═══════════════════════════════════════════════════════════════
+==============================================================
+                 RIGHT TO REPRESENT AGREEMENT
+                 Powered by TalentDetector AI
+==============================================================
 
 Document ID: ${interest.id}
 Generated: ${new Date().toLocaleString('en-GB', { timeZone: 'UTC' })}
-AI Match Score: ${interest.ai_match_score || 'N/A'}%
+AI Match Score: ${interest.ai_match_score ?? 'N/A'}%
 
-═══════════════════════════════════════════════════════════════
+==============================================================
+PARTIES
 
-PARTIES TO THIS AGREEMENT
+Recruitment Agency
+  Name      : ${agency.full_name}
+  Company   : ${agency.company || 'Not specified'}
+  Email     : ${agency.email}
+  Phone     : ${agency.phone || 'Not specified'}
 
-📋 RECRUITMENT AGENCY
-   Name: ${agency.full_name}
-   Company: ${agency.company || 'Not specified'}
-   Email: ${agency.email}
-   Phone: ${agency.phone || 'Not specified'}
+Candidate
+  Name      : ${candidate.name}
+  Email     : ${candidate.email}
+  Phone     : ${candidate.phone || 'Not specified'}
+  Location  : ${candidate.location || 'Not specified'}
 
-👤 CANDIDATE
-   Name: ${candidate.name}
-   Email: ${candidate.email}
-   Phone: ${candidate.phone || 'Not specified'}
-   Location: ${candidate.location || 'Not specified'}
+Position
+  Title     : ${job.title}
+  Company   : ${job.company || 'Not specified'}
+  Location  : ${job.location}
+  Type      : ${job.employment_type || 'Not specified'}
+  Salary    : £${job.salary_min?.toLocaleString()} - £${job.salary_max?.toLocaleString()}
 
-💼 POSITION DETAILS
-   Title: ${job.title}
-   Company: ${job.company || 'Not specified'}
-   Location: ${job.location}
-   Employment Type: ${job.employment_type || 'Not specified'}
-   Salary Range: £${job.salary_min?.toLocaleString()} - £${job.salary_max?.toLocaleString()}
-
-═══════════════════════════════════════════════════════════════
-
-KEY TERMS
-
+==============================================================
 1. EXCLUSIVE REPRESENTATION
-   The Candidate grants the Agency exclusive right to represent them
-   for the position of "${job.title}" for a period of 90 days.
 
-2. SCOPE OF REPRESENTATION
-   • Agency may submit Candidate's profile to the hiring company
-   • Agency is the primary point of contact
-   • Candidate will not apply directly during the representation period
+1.1 The Candidate grants the Agency the exclusive right to represent
+    them for the Position defined above for a period of 90 days from
+    the date of Candidate signature ("Representation Period").
 
+1.2 During the Representation Period, the Candidate will not apply
+    directly or via any other agency for the same role or client.
+
+1.3 The Agency will act as the primary point of contact between the
+    Candidate and the Client (hiring company).
+
+==============================================================
+2. SCOPE OF AGENCY SERVICES
+
+2.1 The Agency may:
+    • Present the Candidate's CV and profile to the Client.
+    • Arrange and coordinate interviews.
+    • Provide feedback and guidance to the Candidate.
+    • Negotiate offers in consultation with the Candidate.
+
+2.2 The Agency will:
+    • Use reasonable care and skill in representing the Candidate.
+    • Keep the Candidate informed of material updates.
+    • Maintain confidentiality of Candidate's personal data.
+
+==============================================================
 3. CANDIDATE OBLIGATIONS
-   • Provide accurate information
-   • Respond to Agency within reasonable timeframes
-   • Attend interviews arranged by Agency
 
-4. AGENCY OBLIGATIONS
-   • Present Candidate professionally
-   • Maintain confidentiality
-   • Provide updates on application progress
+3.1 The Candidate agrees to:
+    • Provide accurate and complete information.
+    • Inform the Agency promptly of any direct contact from the Client.
+    • Attend interviews arranged by the Agency or provide reasonable notice.
+    • Notify the Agency of any other applications to the same Client.
 
-5. FEES
-   • No fee is charged to Candidate
-   • Agency is compensated by the hiring company
+3.2 The Candidate confirms they have not been introduced to the Client
+    for this Position by any other party within the last 12 months.
 
-═══════════════════════════════════════════════════════════════
+==============================================================
+4. FEES AND COMPENSATION
 
-ELECTRONIC SIGNATURE ACKNOWLEDGMENT
+4.1 No fee is payable by the Candidate to the Agency.
 
-By signing, the Candidate confirms:
-• They have read and understood this agreement
-• They authorize the Agency to represent them for the position stated
-• Electronic signature has the same legal effect as handwritten signature
+4.2 The Agency's fee, if applicable, will be paid by the Client and
+    will not reduce the Candidate's agreed compensation.
 
-Candidate Signature: _____________________________
+==============================================================
+5. TERMINATION
 
-Date: ___________________________________________
+5.1 Either party may terminate this Agreement by providing written
+    notice. Termination does not affect any introductions or
+    interviews already arranged.
 
-═══════════════════════════════════════════════════════════════
+5.2 If the Candidate accepts an offer for the Position during the
+    Representation Period (or as a result of the Agency's introduction),
+    this Agreement may be relied upon to establish the Agency's role.
+
+==============================================================
+6. DATA PROTECTION
+
+Both parties agree to comply with applicable data protection laws,
+including UK GDPR and the Data Protection Act 2018 (where relevant).
+
+==============================================================
+7. ELECTRONIC SIGNATURE
+
+By signing electronically, the Candidate acknowledges that:
+    • They have read and understood this Agreement.
+    • They consent to electronic delivery and storage.
+    • Their electronic signature has the same legal effect as a
+      handwritten signature under relevant e-signature laws.
+
+--------------------------------------------------------------
+Candidate Signature: ________________________________
+
+Full Name          : ${candidate.name}
+Date (to be filled at signing)
+IP Address (captured at signing)
+User Agent (captured at signing)
+--------------------------------------------------------------
 
 Generated by TalentDetector AI
 © ${new Date().getFullYear()} TalentDetector. All rights reserved.
@@ -123,13 +162,14 @@ export async function POST(request: Request) {
 
     const rtrContent = generateRTRContent(interest, candidate, job, agency)
 
-    const fileName = `rtr_${interestId}_${Date.now()}.txt`
+    // Single stable path per interest so regeneration overwrites
+    const fileName = `rtr/${interestId}.txt`
     const { error: uploadError } = await supabaseAdmin.storage
       .from('documents')
       .upload(fileName, rtrContent, {
         contentType: 'text/plain',
-        upsert: false,
-        cacheControl: '3600'
+        upsert: true,
+        cacheControl: '0'
       })
 
     if (uploadError) {
@@ -145,7 +185,7 @@ export async function POST(request: Request) {
       .update({
         right_to_represent_url: publicUrl,
         status: 'rtr_ready',
-        agency_notes: `RTR generated on ${new Date().toISOString()}`
+        agency_notes: `RTR (re)generated on ${new Date().toISOString()}`
       })
       .eq('id', interestId)
 
@@ -158,20 +198,20 @@ export async function POST(request: Request) {
         supabaseAdmin.from('notifications').insert({
           user_id: candidate.user_id,
           type: 'rtr_ready',
-          title: '✍️ Document Ready for Signature',
-          message: `Your Right-to-Represent agreement for "${job.title}" is ready`,
+          title: '✍️ RTR ready to sign',
+          message: `Your Right-to-Represent agreement for "${job.title}" is ready (or has been updated) and awaits your signature.`,
           link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,
           ai_priority: 'high',
-          metadata: { interest_id: interestId, job_title: job.title }
+          metadata: { interest_id: interestId, job_title: job.title, regenerated: true }
         }),
       supabaseAdmin.from('notifications').insert({
         user_id: interest.agency_id,
         type: 'rtr_generated',
-        title: '📄 RTR Generated',
-        message: `RTR sent to ${candidate.name} for signature`,
-        link: `/dashboard/agency/interests`,
+        title: '📄 RTR (re)generated',
+        message: `RTR for ${candidate.name} on "${job.title}" has been (re)generated and sent to the candidate.`,
+        link: `/dashboard/agency/interests/${interestId}`,
         ai_priority: 'normal',
-        metadata: { interest_id: interestId, candidate_name: candidate.name }
+        metadata: { interest_id: interestId, candidate_name: candidate.name, regenerated: true }
       })
     ])
 

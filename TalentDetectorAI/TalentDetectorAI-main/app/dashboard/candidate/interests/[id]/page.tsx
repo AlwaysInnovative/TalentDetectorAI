@@ -126,7 +126,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
   }
 
   async function handleRespond(accepted: boolean) {
-    if (responding) return
+    if (responding || !interest) return
 
     setResponding(true)
     try {
@@ -370,7 +370,9 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           {interest.status === 'sent' &&
             interest.candidate_acceptance_status === 'pending_response' && (
               <div className="mb-8">
-                <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
+                <h2 className="text-xl font-bold text-gray-900 mb-4">
+                  Your Response
+                </h2>
                 <textarea
                   rows={3}
                   value={responseComment}
@@ -409,8 +411,12 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
           {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
             <div className="p-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-2xl text-center shadow-2xl">
-              <h2 className="text-2xl font-bold mb-4">Right to Represent Agreement Ready</h2>
-              <p className="mb-6">Your RTR document is ready for review and signature</p>
+              <h2 className="text-2xl font-bold mb-4">
+                Right to Represent Agreement Ready
+              </h2>
+              <p className="mb-6">
+                Your RTR document is ready for review and signature
+              </p>
               <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
                 <button className="inline-flex items-center gap-2 px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:shadow-xl transition">
                   <FileText className="w-6 h-6" />

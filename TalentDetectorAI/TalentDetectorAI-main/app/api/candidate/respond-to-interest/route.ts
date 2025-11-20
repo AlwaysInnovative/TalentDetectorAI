@@ -25,7 +25,6 @@ export async function POST(request: Request) {
       }
     )
 
-    // Fetch interest with related data
     const { data: interest, error: fetchError } = await supabaseAdmin
       .from('candidate_interests')
       .select(`
@@ -38,10 +37,7 @@ export async function POST(request: Request) {
       .single()
 
     if (fetchError || !interest) {
-      return NextResponse.json(
-        { error: 'Interest not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Interest not found' }, { status: 404 })
     }
 
     const newStatus = accepted ? 'interested' : 'not_interested'
@@ -60,13 +56,9 @@ export async function POST(request: Request) {
 
     if (updateError) {
       console.error('Update error:', updateError)
-      return NextResponse.json(
-        { error: 'Failed to save response' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'Failed to save response' }, { status: 500 })
     }
 
-    // Notify agency
     await supabaseAdmin.from('notifications').insert({
       user_id: interest.agency_id,
       type: 'candidate_responded',

@@ -28,6 +28,9 @@ interface InterestWithJoins {
   right_to_represent_signed: boolean | null
   ai_match_score: number | null
   created_at: string
+  candidate_acceptance_status?: string | null
+  cv_filename?: string | null
+  agency_notes?: string | null
   jobs: {
     id: string
     title: string
@@ -119,7 +122,7 @@ export default function InterestedCandidatesPage() {
       }
 
       toast.success(
-        `RTR generated and sent to ${interest.candidates.name} for ${interest.jobs.title}`
+        `RTR (re)generated and sent to ${interest.candidates.name} for ${interest.jobs.title}`
       )
       await loadData()
     } catch (err: any) {
@@ -254,13 +257,13 @@ export default function InterestedCandidatesPage() {
                       </p>
                       <p>
                         Accepted:{' '}
-                        <span className="font-bold text-green-600">
+                          <span className="font-bold text-green-600">
                           {items.filter((i) => i.status === 'interested').length}
                         </span>
                       </p>
                       <p>
                         Declined:{' '}
-                        <span className="font-bold text-red-600">
+                          <span className="font-bold text-red-600">
                           {items.filter((i) => i.status === 'not_interested').length}
                         </span>
                       </p>
@@ -282,104 +285,122 @@ export default function InterestedCandidatesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {items.map((interest) => (
-                          <tr key={interest.id} className="border-b last:border-none">
-                            <td className="px-4 py-3 font-semibold text-gray-900">
-                              {interest.jobs.title}
-                            </td>
-                            <td className="px-4 py-3 text-gray-700">
-                              {interest.jobs.location}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
-                                  interest.status === 'interested'
-                                    ? 'bg-green-100 text-green-700'
+                        {items.map((interest) => {
+                          const canGenerateRTR =
+                            interest.status === 'interested' &&
+                            !!interest.cv_url
+
+                          return (
+                            <tr key={interest.id} className="border-b last:border-none">
+                              <td className="px-4 py-3 font-semibold text-gray-900">
+                                {interest.jobs.title}
+                              </td>
+                              <td className="px-4 py-3 text-gray-700">
+                                {interest.jobs.location}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
+                                    interest.status === 'interested'
+                                      ? 'bg-green-100 text-green-700'
+                                      : interest.status === 'not_interested'
+                                      ? 'bg-red-100 text-red-700'
+                                      : interest.status === 'rtr_ready'
+                                      ? 'bg-purple-100 text-purple-700'
+                                      : 'bg-amber-100 text-amber-700'
+                                  }`}
+                                >
+                                  {interest.status === 'interested'
+                                    ? 'Accepted'
                                     : interest.status === 'not_interested'
-                                    ? 'bg-red-100 text-red-700'
+                                    ? 'Rejected'
                                     : interest.status === 'rtr_ready'
-                                    ? 'bg-purple-100 text-purple-700'
-                                    : 'bg-amber-100 text-amber-700'
-                                }`}
-                              >
-                                {interest.status === 'interested'
-                                  ? 'Accepted'
-                                  : interest.status === 'not_interested'
-                                  ? 'Rejected'
-                                  : interest.status === 'rtr_ready'
-                                  ? 'RTR Ready'
-                                  : 'Pending'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              {interest.ai_match_score && (
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
-                                  <Award className="w-3 h-3" />
-                                  {interest.ai_match_score}%
+                                    ? 'RTR Ready'
+                                    : 'Pending'}
                                 </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              {interest.cv_url ? (
-                                <a
-                                  href={interest.cv_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-blue-600 hover:underline"
-                                >
-                                  <Download className="w-4 h-4" />
-                                  CV
-                                </a>
-                              ) : (
-                                <span className="text-xs text-gray-400">
-                                  Not uploaded
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              {interest.right_to_represent_url ? (
-                                <a
-                                  href={interest.right_to_represent_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-purple-600 hover:underline"
-                                >
-                                  <FileText className="w-4 h-4" />
-                                  View RTR
-                                </a>
-                              ) : interest.status === 'interested' &&
-                                interest.cv_url &&
-                                !interest.right_to_represent_url ? (
-                                <button
-                                  onClick={() => handleGenerateRTR(interest)}
-                                  disabled={generatingRTR === interest.id}
-                                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-bold shadow disabled:opacity-50"
-                                >
-                                  {generatingRTR === interest.id ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Zap className="w-3 h-3" />
-                                  )}
-                                  {generatingRTR === interest.id ? 'Generating' : 'Generate RTR'}
-                                </button>
-                              ) : (
-                                <span className="text-xs text-gray-400">
-                                  Not ready
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-gray-700">
-                              {new Date(interest.created_at).toLocaleDateString()}
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <Link href={`/dashboard/agency/interests/${interest.id}`}>
-                                <button className="inline-flex items-center gap-1 px-3 py-1 border border-gray-300 rounded-full text-xs font-bold text-gray-700 hover:bg-gray-50">
-                                  View Interest
-                                </button>
-                              </Link>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="px-4 py-3">
+                                {interest.ai_match_score && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
+                                    <Award className="w-3 h-3" />
+                                    {interest.ai_match_score}%
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                {interest.cv_url ? (
+                                  <a
+                                    href={interest.cv_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                    CV
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-gray-400">
+                                    Not uploaded
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                {interest.right_to_represent_url ? (
+                                  <div className="flex flex-col gap-1">
+                                    <a
+                                      href={interest.right_to_represent_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 text-purple-600 hover:underline"
+                                    >
+                                      <FileText className="w-4 h-4" />
+                                      View RTR
+                                    </a>
+                                    <button
+                                      onClick={() => handleGenerateRTR(interest)}
+                                      disabled={generatingRTR === interest.id}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-500 text-white text-[11px] font-bold shadow hover:bg-amber-600 disabled:opacity-50"
+                                    >
+                                      {generatingRTR === interest.id ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Zap className="w-3 h-3" />
+                                      )}
+                                      Regenerate
+                                    </button>
+                                  </div>
+                                ) : canGenerateRTR ? (
+                                  <button
+                                    onClick={() => handleGenerateRTR(interest)}
+                                    disabled={generatingRTR === interest.id}
+                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-bold shadow disabled:opacity-50"
+                                  >
+                                    {generatingRTR === interest.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Zap className="w-3 h-3" />
+                                    )}
+                                    Generate RTR
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-gray-400">
+                                    Not ready
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-gray-700">
+                                {new Date(interest.created_at).toLocaleDateString()}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <Link href={`/dashboard/agency/interests/${interest.id}`}>
+                                  <button className="inline-flex items-center gap-1 px-3 py-1 border border-gray-300 rounded-full text-xs font-bold text-gray-700 hover:bg-gray-50">
+                                    View Interest
+                                  </button>
+                                </Link>
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

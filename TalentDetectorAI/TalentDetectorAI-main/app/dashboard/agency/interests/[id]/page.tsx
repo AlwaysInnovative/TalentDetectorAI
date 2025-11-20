@@ -1,115 +1,89 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { 
-  Loader2, Download, FileText, CheckCircle, Zap, ArrowLeft,
-  Mail, Phone, MapPin, Calendar, Award, Sparkles, AlertCircle
-} from 'lucide-react'
-import { motion } from 'framer-motion'
-import toast from 'react-hot-toast'
 import Link from 'next/link'
-import DynamicBackground from '@/components/ui/DynamicBackground'
+import {
+  Loader2,
+  AlertCircle,
+  ArrowLeft,
+  FileText,
+  Download,
+  CheckCircle,
+  Mail,
+  Phone,
+  MapPin,
+  Calendar,
+  Award,
+  Zap,
+  Clock
+} from 'lucide-react'
+import toast from 'react-hot-toast'
 
-export default function InterestDetailPage({ params }: { params: { id: string } }) {
-  const [interest, setInterest] = useState<any>(null)
+export default function AgencyInterestDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true)
+  const [interest, setInterest] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
   const [generatingRTR, setGeneratingRTR] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
-    console.log('📄 Detail page loaded for ID:', params.id)
     loadInterest()
-    
-    // Real-time updates
-    const supabase = createClient()
-    const channel = supabase
-      .channel(`interest-${params.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'candidate_interests',
-          filter: `id=eq.${params.id}`
-        },
-        (payload) => {
-          console.log('🔔 Interest updated:', payload)
-          loadInterest()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      channel.unsubscribe()
-    }
-  }, [params.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadInterest() {
     try {
-      console.log('📥 Loading interest details...')
+      setLoading(true)
+      setError(null)
       const supabase = createClient()
-      
-      const { data, error } = await supabase
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setError('Not logged in as agency user')
+        return
+      }
+
+      const { data, error: fetchError } = await supabase
         .from('candidate_interests')
         .select(`
           *,
-          candidates(id, name, email, phone, location, user_id, skills),
-          jobs(id, title, location, salary_min, salary_max, employment_type),
-          candidate_interest_responses(*)
+          candidates(id, name, email, phone, location, skills),
+          jobs(id, title, description, location, salary_min, salary_max, employment_type, company),
+          profiles!candidate_interests_agency_id_fkey(id, full_name, company, email, phone)
         `)
         .eq('id', params.id)
+        .eq('agency_id', user.id)
         .single()
 
-      if (error) {
-        console.error('❌ Load error:', error)
-        throw error
+      if (fetchError || !data) {
+        setError('Interest not found or not assigned to you')
+        return
       }
 
-      console.log('✅ Interest loaded:', data)
       setInterest(data)
-    } catch (error: any) {
-      console.error('❌ Failed to load:', error)
-      toast.error('Failed to load interest')
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load interest detail')
     } finally {
       setLoading(false)
     }
   }
 
   async function handleGenerateRTR() {
-    console.log('🚀 === GENERATING RTR ===')
-    console.log('Interest ID:', params.id)
-    console.log('Interest data:', interest)
-    
+    if (!interest) return
     setGeneratingRTR(true)
-    
     try {
-      console.log('📡 Calling API...')
-      const response = await fetch('/api/generate-rtr-auto', {
+      const res = await fetch('/api/generate-rtr-auto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interestId: params.id })
+        body: JSON.stringify({ interestId: interest.id })
       })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to generate RTR')
 
-      const result = await response.json()
-      console.log('📥 API Response:', result)
-
-      if (!response.ok) {
-        console.error('❌ API Error:', result)
-        throw new Error(result.error || 'Failed to generate RTR')
-      }
-
-      console.log('✅ RTR generated successfully')
-      toast.success(`✅ RTR sent to ${interest.candidates.name}!`, {
-        duration: 5000,
-        icon: '📄'
-      })
-      
+      toast.success('RTR (re)generated and sent to candidate for signature')
       await loadInterest()
-      
-    } catch (error: any) {
-      console.error('❌ RTR Generation Error:', error)
-      toast.error(`Failed: ${error.message}`, { duration: 6000 })
+    } catch (err: any) {
+      toast.error(err?.message || 'RTR generation failed')
     } finally {
       setGeneratingRTR(false)
     }
@@ -117,203 +91,362 @@ export default function InterestDetailPage({ params }: { params: { id: string } 
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-16 h-16 animate-spin text-blue-600" />
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-emerald-50">
+        <Loader2 className="w-16 h-16 text-emerald-600 animate-spin" />
       </div>
     )
   }
 
-  if (!interest) {
+  if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-8">
-        <div className="text-center">
-          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold mb-4">Interest Not Found</h2>
-          <Link href="/dashboard/agency/interests">
-            <button className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold">
-              Back to Interests
+      <div className="min-h-screen flex items-center justify-center p-8 bg-gradient-to-br from-slate-50 to-emerald-50">
+        <div className="bg-white rounded-2xl p-10 text-center shadow-lg max-w-lg">
+          <AlertCircle className="mx-auto mb-4 w-14 h-14 text-red-500" />
+          <h1 className="font-bold text-2xl text-red-700 mb-4">Error</h1>
+          <p className="mb-6 text-gray-700">{error}</p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={loadInterest}
+              className="px-5 py-2 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700"
+            >
+              Try Again
             </button>
-          </Link>
+            <Link href="/dashboard/agency/interested-candidates">
+              <button className="px-5 py-2 bg-gray-200 text-gray-800 rounded font-bold hover:bg-gray-300 flex items-center gap-2">
+                <ArrowLeft className="w-5 h-5" /> Back
+              </button>
+            </Link>
+          </div>
         </div>
       </div>
     )
   }
 
-  const candidate = interest.candidates
-  const job = interest.jobs
-  const canGenerateRTR = interest.status === 'interested' && 
-                         interest.cv_url && 
-                         !interest.right_to_represent_url
+  if (!interest) return null
 
-  console.log('🎯 Can generate RTR:', canGenerateRTR)
-  console.log('Status:', interest.status)
-  console.log('Has CV:', !!interest.cv_url)
-  console.log('Has RTR:', !!interest.right_to_represent_url)
+  const job = interest.jobs
+  const candidate = interest.candidates
+  const agency = interest.profiles
+
+  const canGenerateRTR =
+    interest.status === 'interested' && !!interest.cv_url
 
   return (
-    <div className="relative min-h-screen p-8">
-      <DynamicBackground page="interest-detail" />
-      
-      <div className="max-w-6xl mx-auto relative z-10">
-        <Link href="/dashboard/agency/interests">
-          <button className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-8 font-bold transition">
-            <ArrowLeft className="w-5 h-5" />
-            Back to Interests
-          </button>
-        </Link>
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 p-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-6 flex items-center justify-between">
+          <Link href="/dashboard/agency/interested-candidates">
+            <button className="flex items-center text-gray-700 hover:text-gray-900 font-semibold transition">
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              Back to Candidate Activity
+            </button>
+          </Link>
+        </div>
 
-        {/* Action Banner */}
-        {canGenerateRTR && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-8 shadow-2xl">
-            <div className="flex items-center gap-4">
-              <Zap className="w-16 h-16 animate-pulse" />
-              <div className="flex-1">
-                <h3 className="text-3xl font-bold mb-2">⚡ Ready to Generate RTR!</h3>
-                <p className="text-amber-100 text-lg">
-                  {candidate.name} is interested and uploaded their CV. Click below to generate RTR.
-                </p>
+        <div className="bg-white rounded-2xl p-8 shadow-xl border border-gray-200">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+                {job.title}
+              </h1>
+              <div className="flex flex-wrap gap-3 text-gray-600 mb-2">
+                <span className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4" />
+                  {job.location}
+                </span>
+                {job.employment_type && (
+                  <span className="px-3 py-1 rounded-full bg-gray-100 text-xs font-bold">
+                    {job.employment_type}
+                  </span>
+                )}
               </div>
+              <p className="text-lg font-semibold text-emerald-700">
+                £{job.salary_min?.toLocaleString()} - £{job.salary_max?.toLocaleString()}
+              </p>
             </div>
-          </motion.div>
-        )}
+            <div className="text-right">
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
+                  interest.status === 'interested'
+                    ? 'bg-green-100 text-green-700'
+                    : interest.status === 'not_interested'
+                    ? 'bg-red-100 text-red-700'
+                    : interest.status === 'rtr_ready'
+                    ? 'bg-purple-100 text-purple-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {interest.status === 'interested'
+                  ? 'Accepted'
+                  : interest.status === 'not_interested'
+                  ? 'Rejected'
+                  : interest.status === 'rtr_ready'
+                  ? 'RTR Ready'
+                  : 'Pending'}
+              </span>
+              <p className="text-xs text-gray-500 mt-2">
+                Created:{' '}
+                {new Date(interest.created_at).toLocaleString()}
+              </p>
+            </div>
+          </div>
 
-        <div className="grid md:grid-cols-3 gap-8">
-          {/* Main Content */}
-          <div className="md:col-span-2">
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200">
-              <div className="flex items-center gap-6 mb-6">
-                <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center text-white font-bold text-4xl shadow-lg">
-                  {candidate.name[0]}
-                </div>
-                <div className="flex-1">
-                  <h1 className="text-4xl font-bold text-gray-900 mb-2">{candidate.name}</h1>
-                  <p className="text-xl text-gray-600 mb-3">{job.title}</p>
-                  <div className="flex gap-2">
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                      interest.status === 'interested' ? 'bg-green-100 text-green-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {interest.status === 'interested' ? '✓ Interested' : interest.status}
-                    </span>
-                    {interest.ai_match_score && (
-                      <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold">
-                        <Award className="w-4 h-4 inline mr-1" />
-                        {interest.ai_match_score}%
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4 mb-6">
-                <div className="flex items-center gap-2 text-gray-700">
-                  <Mail className="w-5 h-5 text-blue-600" />
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-emerald-50 rounded-xl p-5 border border-emerald-200">
+              <h2 className="text-lg font-bold text-gray-900 mb-3">
+                Candidate
+              </h2>
+              <div className="space-y-2 text-sm text-gray-700">
+                <p>
+                  <span className="font-bold">Name:</span> {candidate.name}
+                </p>
+                <p className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
                   {candidate.email}
-                </div>
+                </p>
                 {candidate.phone && (
-                  <div className="flex items-center gap-2 text-gray-700">
-                    <Phone className="w-5 h-5 text-blue-600" />
+                  <p className="flex items-center gap-2">
+                    <Phone className="w-4 h-4" />
                     {candidate.phone}
-                  </div>
+                  </p>
                 )}
                 {candidate.location && (
-                  <div className="flex items-center gap-2 text-gray-700">
-                    <MapPin className="w-5 h-5 text-blue-600" />
+                  <p className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4" />
                     {candidate.location}
-                  </div>
+                  </p>
                 )}
-                <div className="flex items-center gap-2 text-gray-700">
-                  <Calendar className="w-5 h-5 text-blue-600" />
-                  {new Date(interest.created_at).toLocaleDateString()}
-                </div>
+                <p className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  Responded:{' '}
+                  {interest.candidate_responded_at
+                    ? new Date(
+                        interest.candidate_responded_at
+                      ).toLocaleString()
+                    : 'No response yet'}
+                </p>
               </div>
-
               {candidate.skills && candidate.skills.length > 0 && (
-                <div>
-                  <h3 className="font-bold text-gray-900 mb-3">Skills</h3>
+                <div className="mt-3">
+                  <p className="text-xs font-bold text-gray-700 mb-1">
+                    Skills
+                  </p>
                   <div className="flex flex-wrap gap-2">
-                    {candidate.skills.map((skill: string, i: number) => (
-                      <span key={i} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-lg text-sm">
+                    {candidate.skills.slice(0, 8).map((skill: string, i: number) => (
+                      <span
+                        key={i}
+                        className="px-2 py-1 rounded-full bg-white border border-gray-200 text-xs text-gray-700"
+                      >
                         {skill}
                       </span>
                     ))}
                   </div>
                 </div>
               )}
-            </motion.div>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900 mb-3">
+                Agency
+              </h2>
+              <div className="space-y-2 text-sm text-gray-700">
+                <p>
+                  <span className="font-bold">Account:</span>{' '}
+                  {agency.full_name}
+                </p>
+                {agency.company && (
+                  <p>
+                    <span className="font-bold">Company:</span>{' '}
+                    {agency.company}
+                  </p>
+                )}
+                <p className="flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
+                  {agency.email}
+                </p>
+                {agency.phone && (
+                  <p className="flex items-center gap-2">
+                    <Phone className="w-4 h-4" />
+                    {agency.phone}
+                  </p>
+                )}
+              </div>
+              {interest.ai_match_score && (
+                <div className="mt-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Award className="w-4 h-4 text-emerald-600" />
+                    <p className="text-xs font-bold text-gray-700">
+                      AI Match Score
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-green-600 rounded-full"
+                        style={{ width: `${interest.ai_match_score}%` }}
+                      />
+                    </div>
+                    <span className="text-lg font-bold text-emerald-700">
+                      {interest.ai_match_score}%
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Sidebar with Actions */}
-          <div className="space-y-6">
-            {/* Download CV */}
-            {interest.cv_url && (
-              <motion.a
-                whileHover={{ scale: 1.05 }}
-                href={interest.cv_url}
-                target="_blank"
-                download
-                className="block bg-blue-600 hover:bg-blue-700 text-white rounded-2xl p-6 shadow-xl transition text-center">
-                <Download className="w-12 h-12 mx-auto mb-3" />
-                <p className="font-bold text-lg">Download CV</p>
-              </motion.a>
-            )}
+          {job.description && (
+            <div className="mb-8 bg-gray-50 rounded-xl p-6 border border-gray-200">
+              <h2 className="text-lg font-bold text-gray-900 mb-3">
+                Job Description
+              </h2>
+              <div className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">
+                {job.description}
+              </div>
+            </div>
+          )}
 
-            {/* Generate RTR Button - BIG AND CLICKABLE */}
-            {canGenerateRTR && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleGenerateRTR}
-                disabled={generatingRTR}
-                className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl p-8 shadow-2xl transition disabled:opacity-50">
-                {generatingRTR ? (
-                  <div className="text-center">
-                    <Loader2 className="w-12 h-12 animate-spin mx-auto mb-3" />
-                    <p className="font-bold text-xl">Generating RTR...</p>
-                    <p className="text-sm text-amber-100 mt-2">Please wait</p>
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <h3 className="text-md font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                Candidate CV
+              </h3>
+              {interest.cv_url ? (
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-700">
+                    <p className="font-semibold">CV Uploaded</p>
+                    {interest.cv_filename && (
+                      <p className="text-xs text-gray-500">
+                        {interest.cv_filename}
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <div className="text-center">
-                    <Zap className="w-16 h-16 mx-auto mb-3 animate-pulse" />
-                    <p className="font-bold text-2xl mb-2">Generate RTR</p>
-                    <p className="text-sm text-amber-100">Click to send agreement</p>
-                  </div>
-                )}
-              </motion.button>
-            )}
+                  <a
+                    href={interest.cv_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download
+                  </a>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  Candidate has not uploaded a CV yet.
+                </p>
+              )}
+            </div>
 
-            {/* RTR Status */}
-            {interest.right_to_represent_url && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="bg-purple-50 rounded-2xl p-6 border-2 border-purple-200">
-                <FileText className="w-12 h-12 text-purple-600 mx-auto mb-3" />
-                <a
-                  href={interest.right_to_represent_url}
-                  target="_blank"
-                  className="block text-center px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold transition mb-3">
-                  View RTR
-                </a>
-                {interest.right_to_represent_signed ? (
-                  <div className="flex items-center justify-center gap-2 text-green-600 font-bold">
-                    <CheckCircle className="w-6 h-6" />
-                    Signed ✓
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <h3 className="text-md font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-600" />
+                Right-to-Represent
+              </h3>
+              {interest.right_to_represent_url ? (
+                <div className="space-y-3 text-sm text-gray-700">
+                  <div className="flex items-center justify-between">
+                    <a
+                      href={interest.right_to_represent_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700"
+                    >
+                      <FileText className="w-4 h-4" />
+                      View RTR
+                    </a>
+                    <button
+                      onClick={handleGenerateRTR}
+                      disabled={generatingRTR}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-bold shadow hover:from-amber-600 hover:to-orange-700 disabled:opacity-50"
+                    >
+                      {generatingRTR ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Regenerating...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-4 h-4" />
+                          Regenerate RTR
+                        </>
+                      )}
+                    </button>
                   </div>
-                ) : (
-                  <div className="text-center text-orange-600 font-bold">
-                    <AlertCircle className="w-6 h-6 inline mr-2" />
-                    Awaiting Signature
-                  </div>
+                  <p className="text-xs text-gray-500">
+                    Status:{' '}
+                    {interest.right_to_represent_signed
+                      ? 'Signed by candidate'
+                      : 'Awaiting candidate signature'}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Use “Regenerate RTR” if terms changed or you need to resend a corrected
+                    version. The candidate will receive a fresh notification and link.
+                  </p>
+                </div>
+              ) : canGenerateRTR ? (
+                <button
+                  onClick={handleGenerateRTR}
+                  disabled={generatingRTR}
+                  className="inline-flex items-center gap-2 px-4 py-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-sm font-bold shadow hover:from-amber-600 hover:to-orange-700 disabled:opacity-50"
+                >
+                  {generatingRTR ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating RTR...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4" />
+                      Generate RTR
+                    </>
+                  )}
+                </button>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  RTR can be generated after the candidate accepts and uploads a CV.
+                </p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+              <h3 className="text-md font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-gray-600" />
+                Activity Summary
+              </h3>
+              <ul className="text-sm text-gray-700 space-y-1">
+                <li>
+                  • Status: <span className="font-semibold">{interest.status}</span>
+                </li>
+                <li>
+                  • Candidate acceptance:{' '}
+                  <span className="font-semibold">
+                    {interest.candidate_acceptance_status || 'pending_response'}
+                  </span>
+                </li>
+                <li>
+                  • Responded at:{' '}
+                  {interest.candidate_responded_at
+                    ? new Date(
+                        interest.candidate_responded_at
+                      ).toLocaleString()
+                    : 'N/A'}
+                </li>
+                <li>
+                  • RTR signed:{' '}
+                  <span className="font-semibold">
+                    {interest.right_to_represent_signed ? 'Yes' : 'No'}
+                  </span>
+                </li>
+                {interest.agency_notes && (
+                  <li>
+                    • Notes:{' '}
+                    <span className="font-semibold">{interest.agency_notes}</span>
+                  </li>
                 )}
-              </motion.div>
-            )}
+              </ul>
+            </div>
           </div>
         </div>
       </div>

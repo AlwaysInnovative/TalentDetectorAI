@@ -167,7 +167,7 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
     )
   }
 
-  if (!interest?.right_to_represent_url) {
+  if (!interest?.right_to_represent_url && !showSuccess) {
     return (
       <div className="min-h-screen flex items-center justify-center p-8">
         <div className="text-center">
@@ -216,7 +216,7 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
           <div className="bg-green-50 rounded-2xl p-6 mb-8 border-2 border-green-200">
             <div className="grid md:grid-cols-2 gap-4 text-sm">
               <div className="text-left">
-                <p className="text-gray-600 font-bold mb-1">Signed For</p>
+                <p className="text-gray-600 font-bold mb-1">Position</p>
                 <p className="text-gray-900">{job.title}</p>
               </div>
               <div className="text-left">
@@ -335,9 +335,11 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
                         ✓ I have read and agree to all terms
                       </p>
                       <p className="text-sm text-gray-600 leading-relaxed">
-                        By checking this box, you confirm you have read and understood all terms in this
-                        Right-to-Represent Agreement and agree to be legally bound by them. Your
-                        electronic signature has the same legal effect as a handwritten signature.
+                        By checking this box, you confirm you have carefully read,
+                        understood, and agree to be legally bound by all terms and
+                        conditions outlined in this Right-to-Represent Agreement.
+                        Your electronic signature has the same legal effect as a
+                        handwritten signature.
                       </p>
                     </div>
                   </label>
@@ -384,9 +386,10 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
                     <div className="text-sm text-amber-900">
                       <p className="font-bold mb-1">Legal Notice</p>
                       <p>
-                        Your electronic signature is legally binding. By signing, you agree that this
-                        typed name constitutes a legal signature with the same force and effect as a
-                        handwritten signature under applicable electronic signature laws.
+                        Your electronic signature is legally binding. By signing, you
+                        agree that this typed name constitutes a legal signature with
+                        the same force and effect as a handwritten signature under
+                        applicable electronic signature laws.
                       </p>
                     </div>
                   </div>
@@ -440,7 +443,7 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
                 </div>
 
                 {interest.ai_match_score && (
-                  <div className="pt-4 border-t border-gray-200">
+                  <div className="pt-4 border-top border-gray-200">
                     <div className="flex items-center gap-2 mb-2">
                       <Award className="w-5 h-5 text-emerald-600" />
                       <p className="text-gray-600 font-bold">AI Match Score</p>
@@ -488,9 +491,12 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
             </div>
 
             <div className="bg-blue-50 rounded-2xl p-6 border-2 border-blue-200">
-              <h3 className="text-lg font-bold text-gray-900 mb-3">Need Help?</h3>
+              <h3 className="text-lg font-bold text-gray-900 mb-3">
+                Need Help?
+              </h3>
               <p className="text-sm text-gray-700 mb-4">
-                If you have questions about this agreement, contact the agency or our support team.
+                If you have questions about this agreement, contact the agency or
+                our support team.
               </p>
               <div className="space-y-2 text-sm">
                 <p className="text-gray-600">
