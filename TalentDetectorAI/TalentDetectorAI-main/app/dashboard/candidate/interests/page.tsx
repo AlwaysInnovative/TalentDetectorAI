@@ -3,7 +3,7 @@ import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import { 
   Sparkles, Eye, FileText, CheckCircle, Award, 
-  ArrowRight, Clock, AlertCircle, MapPin, DollarSign
+  ArrowRight, Clock, AlertCircle, MapPin, DollarSign 
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
@@ -12,13 +12,11 @@ import DynamicBackground from '@/components/ui/DynamicBackground'
 const fetcher = async () => {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-
   const { data: candidateData } = await supabase
     .from('candidates')
     .select('id')
     .eq('user_id', user?.id)
     .single()
-
   if (!candidateData) return []
 
   const { data } = await supabase
@@ -30,8 +28,30 @@ const fetcher = async () => {
     `)
     .eq('candidate_id', candidateData.id)
     .order('created_at', { ascending: false })
-
   return data || []
+}
+
+function getStatusMessage(interest: any) {
+  // Enhanced, precise status logic
+  if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
+    return "[translate:Please review the job and respond with your acceptance or decline.]"
+  }
+  if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
+    return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
+  }
+  if (
+    interest.status === 'not_interested' ||
+    interest.status === 'rejected'
+  ) {
+    return "[translate:You have declined this opportunity.]"
+  }
+  if (interest.status === 'rtr_ready') {
+    return "[translate:Your Right to Represent agreement is ready to sign.]"
+  }
+  if (interest.status === 'pending_agency_action') {
+    return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
+  }
+  return ""
 }
 
 export default function CandidateInterestsPage() {
@@ -54,7 +74,6 @@ export default function CandidateInterestsPage() {
           </p>
         </div>
 
-        {/* Action Banner */}
         {unreadCount > 0 && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -81,6 +100,7 @@ export default function CandidateInterestsPage() {
             {interests?.map((interest: any, index: number) => {
               const job = interest.jobs
               const agency = interest.profiles
+              const statusMsg = getStatusMessage(interest)
 
               return (
                 <motion.div
@@ -94,12 +114,18 @@ export default function CandidateInterestsPage() {
                       whileHover={{ scale: 1.01, y: -4 }}
                       className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-2xl transition cursor-pointer">
                       
+                      {/* Enhanced: Status Message Banner */}
+                      {statusMsg && (
+                        <div className="mb-4 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800 text-base font-medium">
+                          {statusMsg}
+                        </div>
+                      )}
+
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
                           {/* Header */}
                           <div className="flex items-center gap-3 mb-4">
                             <h2 className="text-3xl font-bold text-gray-900">{job.title}</h2>
-                            
                             {!interest.viewed_by_candidate && (
                               <motion.span
                                 animate={{ scale: [1, 1.1, 1] }}
@@ -108,7 +134,6 @@ export default function CandidateInterestsPage() {
                                 NEW - CLICK TO VIEW
                               </motion.span>
                             )}
-
                             {interest.ai_match_score && (
                               <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold flex items-center gap-1">
                                 <Award className="w-4 h-4" />
@@ -117,7 +142,6 @@ export default function CandidateInterestsPage() {
                             )}
                           </div>
 
-                          {/* Job Details */}
                           <div className="flex flex-wrap gap-4 mb-4">
                             <span className="flex items-center gap-2 text-gray-600">
                               <MapPin className="w-5 h-5" />
@@ -129,14 +153,12 @@ export default function CandidateInterestsPage() {
                             </span>
                           </div>
 
-                          {/* Agency Info */}
                           <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
                             <span className="font-bold">From: {agency.full_name}</span>
                             {agency.company && <span>• {agency.company}</span>}
                             <span>• {new Date(interest.created_at).toLocaleDateString()}</span>
                           </div>
 
-                          {/* Status Badges */}
                           <div className="flex gap-2 flex-wrap">
                             {interest.viewed_by_candidate && (
                               <span className="flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
@@ -165,7 +187,6 @@ export default function CandidateInterestsPage() {
                           </div>
                         </div>
 
-                        {/* CTA Button */}
                         <div className="ml-6 flex flex-col items-center gap-3">
                           <motion.div
                             whileHover={{ scale: 1.05 }}
@@ -176,7 +197,6 @@ export default function CandidateInterestsPage() {
                              'View Details'}
                             <ArrowRight className="w-6 h-6" />
                           </motion.div>
-                          
                           {!interest.candidate_responded_at && (
                             <p className="text-sm text-gray-600 text-center">
                               {!interest.viewed_by_candidate ? 'Click to review' :
