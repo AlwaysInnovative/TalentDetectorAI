@@ -1,9 +1,9 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, AlertCircle, ArrowLeft, FileText, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Loader2, AlertCircle, ArrowLeft, FileText, ThumbsUp, ThumbsDown, Upload } from 'lucide-react'
 
 export default function CandidateInterestDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true)
@@ -11,7 +11,10 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
   const [error, setError] = useState('')
   const [responding, setResponding] = useState(false)
   const [responseComment, setResponseComment] = useState('')
+  const [cvFile, setCvFile] = useState<File | null>(null)
+  const [uploadingCv, setUploadingCv] = useState(false)
   const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadInterest()
@@ -23,13 +26,13 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
       setLoading(true)
       setError('')
       const supabase = createClient()
-      // Step 1: Get logged in user
+      // Get logged-in user
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
         setError('Not logged in!')
         return
       }
-      // Step 2: Look up candidate profile by user_id
+      // Get candidate by user_id
       const { data: candidate, error: candErr } = await supabase
         .from('candidates')
         .select('id')
@@ -39,12 +42,12 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         setError('No candidate profile found for your user.')
         return
       }
-      // Step 3: Fetch interest by params.id and candidate.id
+      // Fetch interest detail
       const { data, error: interestErr } = await supabase
         .from('candidate_interests')
         .select(`
           *,
-          jobs(id, title, location, salary_min, salary_max),
+          jobs(id, title, description, location, salary_min, salary_max),
           candidates(id, name, email)
         `)
         .eq('id', params.id)
@@ -92,16 +95,51 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     }
   }
 
+  async function handleUploadCv() {
+    if (!cvFile) return
+    setUploadingCv(true)
+    setError('')
+    try {
+      const supabase = createClient()
+      // Upload to Supabase Storage
+      const filePath = `cv_${interest.id}_${Date.now()}_${cvFile.name}`
+      let { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, cvFile)
+      if (uploadError) throw uploadError
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath)
+
+      // Update candidate_interests record
+      const { error: updateError } = await supabase
+        .from('candidate_interests')
+        .update({
+          cv_url: publicUrl,
+          cv_filename: cvFile.name,
+          cv_uploaded_at: new Date().toISOString(),
+        })
+        .eq('id', interest.id)
+      if (updateError) throw updateError
+
+      setCvFile(null)
+      await loadInterest() // refresh state
+    } catch (err: any) {
+      setError('Failed to upload CV. ' + (err?.message || err))
+    } finally {
+      setUploadingCv(false)
+    }
+  }
+
   function getStatusMessage(interest: any) {
     if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
       return "Please review the job and respond with your acceptance or decline."
     }
-    if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
+    if (interest.status === 'interested') {
       return "Thank you for your interest! The agency will follow up with the next steps."
     }
     if (
-      interest.status === 'not_interested' ||
-      interest.status === 'rejected'
+      interest.status === 'not_interested'
     ) {
       return "You have declined this opportunity."
     }
@@ -159,16 +197,47 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         <div className="bg-white rounded-xl p-8 shadow-lg">
           <h1 className="text-3xl font-bold mb-2">{job?.title}</h1>
           <p className="text-lg text-gray-600 mb-2">{job?.location}</p>
-          <p className="mb-5 text-gray-800">Salary: £{job?.salary_min?.toLocaleString()} - £{job?.salary_max?.toLocaleString()}</p>
-          <div className="mb-6">
-            <strong>Your Name:</strong> {candidate?.name}<br />
-            <strong>Your Email:</strong> {candidate?.email}
+          <p className="mb-3 text-gray-800"><b>Salary:</b> £{job?.salary_min?.toLocaleString()} - £{job?.salary_max?.toLocaleString()}</p>
+          <div className="mb-5 text-gray-800">
+            <div className="mb-3">
+              <b>Description:</b>
+              <div className="whitespace-pre-wrap mt-1">{job?.description || '—'}</div>
+            </div>
+            <div>
+              <b>Your Name:</b> {candidate?.name}<br />
+              <b>Your Email:</b> {candidate?.email}
+            </div>
           </div>
           
           {/* Status Message */}
           {statusMsg && (
             <div className="mb-6 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800">
               {statusMsg}
+            </div>
+          )}
+
+          {/* CV Upload Section */}
+          {!interest.cv_url && (
+            <div className="mb-8">
+              <div className="flex flex-col gap-2 mb-2">
+                <label className="font-bold">Upload Your CV:</label>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  disabled={uploadingCv}
+                  accept=".pdf,.doc,.docx"
+                  onChange={e => setCvFile(e.target.files?.[0] || null)}
+                  className="block border rounded px-3 py-2"
+                />
+              </div>
+              <button
+                onClick={handleUploadCv}
+                disabled={!cvFile || uploadingCv}
+                className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded font-bold mt-2"
+              >
+                {uploadingCv ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+                Upload CV
+              </button>
             </div>
           )}
 
@@ -214,6 +283,19 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
               >
                 <FileText className="inline w-6 h-6 mr-2" />
                 View / Download RTR
+              </a>
+            </div>
+          )}
+
+          {/* Download/View CV */}
+          {interest.cv_url && (
+            <div className="mt-4">
+              <a
+                href={interest.cv_url}
+                target="_blank"
+                className="inline-block px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 transition"
+              >
+                View / Download Your Uploaded CV
               </a>
             </div>
           )}
