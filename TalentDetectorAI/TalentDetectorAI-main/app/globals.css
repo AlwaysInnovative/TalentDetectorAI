@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn-primary { @apply bg-gradient-to-r from-primary-600 to-primary-700 text-white px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50; }
+  .card { @apply bg-white rounded-xl shadow-lg p-6 border hover:shadow-xl transition-all; }
+  .input { @apply w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 transition-all outline-none; }
+}

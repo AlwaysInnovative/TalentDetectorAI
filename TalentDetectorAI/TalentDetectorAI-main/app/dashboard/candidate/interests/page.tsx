@@ -1,0 +1,209 @@
+'use client'
+import useSWR from 'swr'
+import { createClient } from '@/lib/supabase/client'
+import { 
+  Sparkles, Eye, FileText, CheckCircle, Award, 
+  ArrowRight, Clock, AlertCircle, MapPin, DollarSign
+} from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import Link from 'next/link'
+import DynamicBackground from '@/components/ui/DynamicBackground'
+
+const fetcher = async () => {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const { data: candidateData } = await supabase
+    .from('candidates')
+    .select('id')
+    .eq('user_id', user?.id)
+    .single()
+
+  if (!candidateData) return []
+
+  const { data } = await supabase
+    .from('candidate_interests')
+    .select(`
+      *,
+      jobs(*),
+      profiles!candidate_interests_agency_id_fkey(full_name, company)
+    `)
+    .eq('candidate_id', candidateData.id)
+    .order('created_at', { ascending: false })
+
+  return data || []
+}
+
+export default function CandidateInterestsPage() {
+  const { data: interests } = useSWR('candidate-interests', fetcher, { refreshInterval: 5000 })
+
+  const unreadCount = interests?.filter((i: any) => !i.viewed_by_candidate).length || 0
+
+  return (
+    <div className="relative min-h-screen p-8">
+      <DynamicBackground page="candidate-interests" />
+
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3 flex items-center gap-3">
+            <Sparkles className="w-12 h-12 text-blue-600" />
+            Your Opportunities
+          </h1>
+          <p className="text-xl text-gray-600">
+            {unreadCount > 0 ? `${unreadCount} new ${unreadCount === 1 ? 'opportunity' : 'opportunities'} waiting` : 'All caught up!'}
+          </p>
+        </div>
+
+        {/* Action Banner */}
+        {unreadCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-8 shadow-2xl">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center">
+                <AlertCircle className="w-10 h-10 animate-pulse" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-3xl font-bold mb-2">
+                  Action Required: {unreadCount} New {unreadCount === 1 ? 'Opportunity' : 'Opportunities'}!
+                </h3>
+                <p className="text-amber-100 text-lg">
+                  Click on any opportunity below to review details, upload your CV, and respond
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        <div className="space-y-6">
+          <AnimatePresence>
+            {interests?.map((interest: any, index: number) => {
+              const job = interest.jobs
+              const agency = interest.profiles
+
+              return (
+                <motion.div
+                  key={interest.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ delay: index * 0.05 }}>
+                  <Link href={`/dashboard/candidate/interests/${interest.id}`}>
+                    <motion.div
+                      whileHover={{ scale: 1.01, y: -4 }}
+                      className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-2xl transition cursor-pointer">
+                      
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          {/* Header */}
+                          <div className="flex items-center gap-3 mb-4">
+                            <h2 className="text-3xl font-bold text-gray-900">{job.title}</h2>
+                            
+                            {!interest.viewed_by_candidate && (
+                              <motion.span
+                                animate={{ scale: [1, 1.1, 1] }}
+                                transition={{ repeat: Infinity, duration: 2 }}
+                                className="px-4 py-2 bg-red-500 text-white rounded-full text-sm font-bold">
+                                NEW - CLICK TO VIEW
+                              </motion.span>
+                            )}
+
+                            {interest.ai_match_score && (
+                              <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold flex items-center gap-1">
+                                <Award className="w-4 h-4" />
+                                {interest.ai_match_score}% Match
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Job Details */}
+                          <div className="flex flex-wrap gap-4 mb-4">
+                            <span className="flex items-center gap-2 text-gray-600">
+                              <MapPin className="w-5 h-5" />
+                              {job.location}
+                            </span>
+                            <span className="flex items-center gap-2 text-gray-600">
+                              <DollarSign className="w-5 h-5" />
+                              {interest.salary_range}
+                            </span>
+                          </div>
+
+                          {/* Agency Info */}
+                          <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
+                            <span className="font-bold">From: {agency.full_name}</span>
+                            {agency.company && <span>• {agency.company}</span>}
+                            <span>• {new Date(interest.created_at).toLocaleDateString()}</span>
+                          </div>
+
+                          {/* Status Badges */}
+                          <div className="flex gap-2 flex-wrap">
+                            {interest.viewed_by_candidate && (
+                              <span className="flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
+                                <Eye className="w-4 h-4" />
+                                Viewed
+                              </span>
+                            )}
+                            {interest.cv_url && (
+                              <span className="flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-bold">
+                                <FileText className="w-4 h-4" />
+                                CV Uploaded
+                              </span>
+                            )}
+                            {interest.candidate_responded_at && (
+                              <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
+                                interest.status === 'interested' ? 'bg-green-100 text-green-700' :
+                                interest.status === 'not_interested' ? 'bg-red-100 text-red-700' :
+                                'bg-blue-100 text-blue-700'
+                              }`}>
+                                <CheckCircle className="w-4 h-4" />
+                                {interest.status === 'interested' ? 'Interested' :
+                                 interest.status === 'not_interested' ? 'Not Interested' :
+                                 'Needs Info'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* CTA Button */}
+                        <div className="ml-6 flex flex-col items-center gap-3">
+                          <motion.div
+                            whileHover={{ scale: 1.05 }}
+                            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-bold text-lg shadow-lg flex items-center gap-2">
+                            {!interest.viewed_by_candidate ? 'View Now' :
+                             !interest.cv_url ? 'Upload CV' :
+                             !interest.candidate_responded_at ? 'Respond' :
+                             'View Details'}
+                            <ArrowRight className="w-6 h-6" />
+                          </motion.div>
+                          
+                          {!interest.candidate_responded_at && (
+                            <p className="text-sm text-gray-600 text-center">
+                              {!interest.viewed_by_candidate ? 'Click to review' :
+                               !interest.cv_url ? 'Upload your CV next' :
+                               'Complete your response'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  </Link>
+                </motion.div>
+              )
+            })}
+          </AnimatePresence>
+
+          {(!interests || interests.length === 0) && (
+            <div className="bg-white rounded-2xl p-20 text-center shadow-lg">
+              <Clock className="w-32 h-32 text-gray-300 mx-auto mb-8" />
+              <h3 className="text-3xl font-bold text-gray-900 mb-4">No Opportunities Yet</h3>
+              <p className="text-xl text-gray-600">
+                Recruitment agencies will send you opportunities that match your profile
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
