@@ -3,34 +3,14 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, AlertCircle, ArrowLeft, FileText } from 'lucide-react'
-
-function getStatusMessage(interest: any) {
-  if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-    return "[translate:Please review the job and respond with your acceptance or decline.]"
-  }
-  if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
-    return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
-  }
-  if (
-    interest.status === 'not_interested' ||
-    interest.status === 'rejected'
-  ) {
-    return "[translate:You have declined this opportunity.]"
-  }
-  if (interest.status === 'rtr_ready') {
-    return "[translate:Your Right to Represent agreement is ready to sign.]"
-  }
-  if (interest.status === 'pending_agency_action') {
-    return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
-  }
-  return ""
-}
+import { Loader2, AlertCircle, ArrowLeft, FileText, ThumbsUp, ThumbsDown } from 'lucide-react'
 
 export default function CandidateInterestDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true)
   const [interest, setInterest] = useState<any>(null)
   const [error, setError] = useState('')
+  const [responding, setResponding] = useState(false)
+  const [responseComment, setResponseComment] = useState('')
   const router = useRouter()
 
   useEffect(() => {
@@ -81,6 +61,57 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleRespond(accepted: boolean) {
+    if (responding) return
+    setResponding(true)
+    setError('')
+    try {
+      const res = await fetch('/api/candidate/respond-to-interest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interest_id: interest.id,
+          accepted,
+          comment: responseComment,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error || 'Failed to submit response')
+        setResponding(false)
+        return
+      }
+      await loadInterest() // reload to update state
+      setResponseComment('')
+    } catch (err: any) {
+      setError('Could not submit. ' + (err?.message || err))
+    } finally {
+      setResponding(false)
+    }
+  }
+
+  function getStatusMessage(interest: any) {
+    if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
+      return "[translate:Please review the job and respond with your acceptance or decline.]"
+    }
+    if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
+      return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
+    }
+    if (
+      interest.status === 'not_interested' ||
+      interest.status === 'rejected'
+    ) {
+      return "[translate:You have declined this opportunity.]"
+    }
+    if (interest.status === 'rtr_ready') {
+      return "[translate:Your Right to Represent agreement is ready to sign.]"
+    }
+    if (interest.status === 'pending_agency_action') {
+      return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
+    }
+    return ""
   }
 
   if (loading) return (
@@ -134,26 +165,57 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             <strong>Your Email:</strong> {candidate?.email}
           </div>
           
-          {/* Enhanced status display */}
+          {/* Status Message */}
           {statusMsg && (
             <div className="mb-6 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800">
               {statusMsg}
             </div>
           )}
 
-          {/* RTR Available Banner */}
+          {/* Accept/Decline Actions */}
+          {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
+            <div className="mb-8">
+              <textarea
+                rows={3}
+                value={responseComment}
+                onChange={e => setResponseComment(e.target.value)}
+                className="w-full border rounded-lg p-3 mb-3"
+                placeholder="Add comments or questions (optional)"
+              />
+              <div className="flex gap-4">
+                <button
+                  onClick={() => handleRespond(false)}
+                  disabled={responding}
+                  className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
+                >
+                  {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsDown className="w-5 h-5" />}
+                  [translate:Decline]
+                </button>
+                <button
+                  onClick={() => handleRespond(true)}
+                  disabled={responding}
+                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
+                >
+                  {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
+                  [translate:Accept]
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* RTR Section */}
           {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
             <div className="bg-purple-50 p-6 rounded-xl text-center mb-6">
-              <h2 className="font-bold text-xl mb-4">Right to Represent Agreement Available</h2>
+              <h2 className="font-bold text-xl mb-4">[translate:Right to Represent Agreement Available]</h2>
               <a
                 href={interest.right_to_represent_url}
                 target="_blank"
                 className="inline-block px-6 py-3 bg-purple-600 text-white rounded-lg font-bold shadow hover:bg-purple-700 transition"
               >
                 <FileText className="inline w-6 h-6 mr-2" />
-                View / Download RTR
+                [translate:View / Download RTR]
               </a>
-              {/* You can add your e-sign flow here */}
+              {/* Optional e-sign logic goes here */}
             </div>
           )}
         </div>
