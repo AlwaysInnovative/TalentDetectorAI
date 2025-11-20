@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Loader2, AlertCircle, ArrowLeft, FileText, ThumbsUp, ThumbsDown, Upload } from 'lucide-react'
+import { Loader2, AlertCircle, ArrowLeft, FileText, ThumbsUp, ThumbsDown, Upload, Download, CheckCircle } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function CandidateInterestDetailPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true)
@@ -26,50 +27,97 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
       setLoading(true)
       setError('')
       const supabase = createClient()
-      // Get logged-in user
+      
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
-        setError('Not logged in!')
+        setError('Not logged in')
         return
       }
-      // Get candidate by user_id
+
       const { data: candidate, error: candErr } = await supabase
         .from('candidates')
         .select('id')
         .eq('user_id', user.id)
         .single()
+
       if (candErr || !candidate) {
-        setError('No candidate profile found for your user.')
+        setError('Candidate profile not found')
         return
       }
-      // Fetch interest detail
+
       const { data, error: interestErr } = await supabase
         .from('candidate_interests')
         .select(`
           *,
-          jobs(id, title, description, location, salary_min, salary_max),
-          candidates(id, name, email)
+          jobs(id, title, description, location, salary_min, salary_max, department, employment_type),
+          candidates(id, name, email, phone),
+          profiles!candidate_interests_agency_id_fkey(full_name, company, email)
         `)
         .eq('id', params.id)
         .eq('candidate_id', candidate.id)
         .single()
+
       if (interestErr || !data) {
-        setError('This opportunity does not exist or is not assigned to you.')
+        setError('Opportunity not found or not assigned to you')
         return
       }
+
       setInterest(data)
       setError('')
     } catch (err: any) {
-      setError('Failed to load opportunity: ' + (err?.message || err))
+      setError(err?.message || 'Failed to load opportunity')
     } finally {
       setLoading(false)
     }
   }
 
+  async function handleUploadCv() {
+    if (!cvFile) {
+      toast.error('Please select a CV file first')
+      return
+    }
+
+    setUploadingCv(true)
+    try {
+      const supabase = createClient()
+      const filePath = `cv_${Date.now()}_${cvFile.name}`
+      
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, cvFile)
+
+      if (uploadError) throw uploadError
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath)
+
+      const { error: updateError } = await supabase
+        .from('candidate_interests')
+        .update({
+          cv_url: publicUrl,
+          cv_filename: cvFile.name,
+          cv_uploaded_at: new Date().toISOString(),
+        })
+        .eq('id', interest.id)
+
+      if (updateError) throw updateError
+
+      toast.success('CV uploaded successfully!')
+      setCvFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      await loadInterest()
+    } catch (err: any) {
+      toast.error('Failed to upload CV: ' + (err?.message || 'Unknown error'))
+    } finally {
+      setUploadingCv(false)
+    }
+  }
+
   async function handleRespond(accepted: boolean) {
     if (responding) return
+    
     setResponding(true)
-    setError('')
     try {
       const res = await fetch('/api/candidate/respond-to-interest', {
         method: 'POST',
@@ -80,192 +128,231 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           comment: responseComment,
         }),
       })
+
       const data = await res.json()
+      
       if (!res.ok) {
-        setError(data.error || 'Failed to submit response')
-        setResponding(false)
+        toast.error(data.error || 'Failed to submit response')
         return
       }
-      await loadInterest() // reload to update state
+
+      toast.success(accepted ? 'You accepted this opportunity!' : 'You declined this opportunity')
       setResponseComment('')
+      await loadInterest()
     } catch (err: any) {
-      setError('Could not submit. ' + (err?.message || err))
+      toast.error('Could not submit response')
     } finally {
       setResponding(false)
     }
   }
 
-  async function handleUploadCv() {
-    if (!cvFile) return
-    setUploadingCv(true)
-    setError('')
-    try {
-      const supabase = createClient()
-      // Upload to Supabase Storage
-      const filePath = `cv_${interest.id}_${Date.now()}_${cvFile.name}`
-      let { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, cvFile)
-      if (uploadError) throw uploadError
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath)
-
-      // Update candidate_interests record
-      const { error: updateError } = await supabase
-        .from('candidate_interests')
-        .update({
-          cv_url: publicUrl,
-          cv_filename: cvFile.name,
-          cv_uploaded_at: new Date().toISOString(),
-        })
-        .eq('id', interest.id)
-      if (updateError) throw updateError
-
-      setCvFile(null)
-      await loadInterest() // refresh state
-    } catch (err: any) {
-      setError('Failed to upload CV. ' + (err?.message || err))
-    } finally {
-      setUploadingCv(false)
-    }
-  }
-
   function getStatusMessage(interest: any) {
     if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-      return "Please review the job and respond with your acceptance or decline."
+      return { text: 'Please review the job details below and respond with your decision.', color: 'yellow' }
     }
     if (interest.status === 'interested') {
-      return "Thank you for your interest! The agency will follow up with the next steps."
+      return { text: 'You accepted this opportunity! The agency will contact you with next steps.', color: 'green' }
     }
-    if (
-      interest.status === 'not_interested'
-    ) {
-      return "You have declined this opportunity."
+    if (interest.status === 'not_interested') {
+      return { text: 'You declined this opportunity.', color: 'red' }
     }
     if (interest.status === 'rtr_ready') {
-      return "Your Right to Represent agreement is ready to sign."
+      return { text: 'Your Right to Represent agreement is ready for signature.', color: 'purple' }
     }
-    if (interest.status === 'pending_agency_action') {
-      return "Waiting for the agency to provide required documents. Please check back soon."
-    }
-    return ""
+    return null
   }
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50">
-      <Loader2 className="w-14 h-14 text-blue-600 animate-spin"/>
-    </div>
-  )
-
-  if (error) return (
-    <div className="min-h-screen flex items-center justify-center p-8 bg-gradient-to-br from-slate-50 to-indigo-50 ">
-      <div className="bg-white rounded-2xl p-10 text-center shadow-lg max-w-lg">
-        <AlertCircle className="mx-auto mb-4 w-14 h-14 text-red-500"/>
-        <h1 className="font-bold text-2xl text-red-700 mb-4">Failed to Load Opportunity</h1>
-        <p className="mb-6">{error}</p>
-        <button
-          onClick={loadInterest}
-          className="px-5 py-2 bg-blue-600 text-white rounded font-bold mr-2"
-        >Try Again</button>
-        <Link href="/dashboard/candidate/interests">
-          <button
-            className="px-5 py-2 bg-gray-100 text-gray-800 rounded font-bold ml-2 flex items-center justify-center"
-          ><ArrowLeft className="w-5 h-5 mr-2" /> Back</button>
-        </Link>
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50">
+        <Loader2 className="w-14 h-14 text-blue-600 animate-spin"/>
       </div>
-    </div>
-  )
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 bg-gradient-to-br from-slate-50 to-indigo-50">
+        <div className="bg-white rounded-2xl p-10 text-center shadow-lg max-w-lg">
+          <AlertCircle className="mx-auto mb-4 w-14 h-14 text-red-500"/>
+          <h1 className="font-bold text-2xl text-red-700 mb-4">Error</h1>
+          <p className="mb-6 text-gray-700">{error}</p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={loadInterest}
+              className="px-5 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700"
+            >
+              Try Again
+            </button>
+            <Link href="/dashboard/candidate/interests">
+              <button className="px-5 py-2 bg-gray-200 text-gray-800 rounded font-bold hover:bg-gray-300 flex items-center gap-2">
+                <ArrowLeft className="w-5 h-5" /> Back
+              </button>
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!interest) return null
 
   const job = interest.jobs
   const candidate = interest.candidates
-  const statusMsg = getStatusMessage(interest)
+  const agency = interest.profiles
+  const statusInfo = getStatusMessage(interest)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-8">
       <div className="max-w-4xl mx-auto">
         <div className="mb-4">
           <Link href="/dashboard/candidate/interests">
-            <button className="flex items-center text-blue-600 hover:text-blue-800 font-semibold">
-              <ArrowLeft className="w-5 h-5" />
+            <button className="flex items-center text-blue-600 hover:text-blue-800 font-semibold transition">
+              <ArrowLeft className="w-5 h-5 mr-2" />
               Back to My Opportunities
             </button>
           </Link>
         </div>
-        <div className="bg-white rounded-xl p-8 shadow-lg">
-          <h1 className="text-3xl font-bold mb-2">{job?.title}</h1>
-          <p className="text-lg text-gray-600 mb-2">{job?.location}</p>
-          <p className="mb-3 text-gray-800"><b>Salary:</b> £{job?.salary_min?.toLocaleString()} - £{job?.salary_max?.toLocaleString()}</p>
-          <div className="mb-5 text-gray-800">
-            <div className="mb-3">
-              <b>Description:</b>
-              <div className="whitespace-pre-wrap mt-1">{job?.description || '—'}</div>
+
+        <div className="bg-white rounded-2xl p-8 shadow-xl">
+          {/* Job Title & Salary */}
+          <div className="mb-6">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">{job.title}</h1>
+            <div className="flex flex-wrap gap-4 text-lg text-gray-600 mb-3">
+              <span>📍 {job.location}</span>
+              {job.department && <span>• {job.department}</span>}
+              {job.employment_type && <span>• {job.employment_type}</span>}
             </div>
-            <div>
-              <b>Your Name:</b> {candidate?.name}<br />
-              <b>Your Email:</b> {candidate?.email}
-            </div>
+            <p className="text-2xl font-bold text-green-600">
+              £{job.salary_min?.toLocaleString()} - £{job.salary_max?.toLocaleString()}
+            </p>
           </div>
-          
+
           {/* Status Message */}
-          {statusMsg && (
-            <div className="mb-6 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800">
-              {statusMsg}
+          {statusInfo && (
+            <div className={`mb-6 p-4 rounded-lg border-2 ${
+              statusInfo.color === 'yellow' ? 'bg-yellow-50 border-yellow-300 text-yellow-800' :
+              statusInfo.color === 'green' ? 'bg-green-50 border-green-300 text-green-800' :
+              statusInfo.color === 'red' ? 'bg-red-50 border-red-300 text-red-800' :
+              'bg-purple-50 border-purple-300 text-purple-800'
+            }`}>
+              <p className="font-semibold">{statusInfo.text}</p>
             </div>
           )}
 
+          {/* Job Description */}
+          {job.description && (
+            <div className="mb-6 p-6 bg-gray-50 rounded-xl border border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900 mb-3">Job Description</h2>
+              <div className="whitespace-pre-wrap text-gray-700 leading-relaxed">{job.description}</div>
+            </div>
+          )}
+
+          {/* Agency Info */}
+          <div className="mb-6 p-6 bg-blue-50 rounded-xl border border-blue-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-3">Agency Information</h2>
+            <div className="space-y-2 text-gray-700">
+              <p><strong>Agency:</strong> {agency.full_name}</p>
+              {agency.company && <p><strong>Company:</strong> {agency.company}</p>}
+              <p><strong>Contact:</strong> {agency.email}</p>
+            </div>
+          </div>
+
+          {/* Your Details */}
+          <div className="mb-6 p-6 bg-purple-50 rounded-xl border border-purple-200">
+            <h2 className="text-xl font-bold text-gray-900 mb-3">Your Details</h2>
+            <div className="space-y-2 text-gray-700">
+              <p><strong>Name:</strong> {candidate.name}</p>
+              <p><strong>Email:</strong> {candidate.email}</p>
+              {candidate.phone && <p><strong>Phone:</strong> {candidate.phone}</p>}
+            </div>
+          </div>
+
           {/* CV Upload Section */}
           {!interest.cv_url && (
-            <div className="mb-8">
-              <div className="flex flex-col gap-2 mb-2">
-                <label className="font-bold">Upload Your CV:</label>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  disabled={uploadingCv}
-                  accept=".pdf,.doc,.docx"
-                  onChange={e => setCvFile(e.target.files?.[0] || null)}
-                  className="block border rounded px-3 py-2"
-                />
-              </div>
+            <div className="mb-8 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border-2 border-purple-300">
+              <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Upload className="w-6 h-6 text-purple-600" />
+                Upload Your CV
+              </h2>
+              <input
+                type="file"
+                ref={fileInputRef}
+                disabled={uploadingCv}
+                accept=".pdf,.doc,.docx"
+                onChange={e => setCvFile(e.target.files?.[0] || null)}
+                className="block w-full border-2 border-gray-300 rounded-lg px-4 py-2 mb-4"
+              />
               <button
                 onClick={handleUploadCv}
                 disabled={!cvFile || uploadingCv}
-                className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded font-bold mt-2"
+                className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
-                {uploadingCv ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
-                Upload CV
+                {uploadingCv ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5" />
+                    Upload CV
+                  </>
+                )}
               </button>
             </div>
           )}
 
-          {/* Accept/Decline Actions */}
+          {/* CV Downloaded */}
+          {interest.cv_url && (
+            <div className="mb-8 p-6 bg-green-50 rounded-xl border-2 border-green-300">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-8 h-8 text-green-600" />
+                  <div>
+                    <h3 className="font-bold text-gray-900">CV Uploaded</h3>
+                    <p className="text-sm text-gray-600">{interest.cv_filename}</p>
+                  </div>
+                </div>
+                <a
+                  href={interest.cv_url}
+                  target="_blank"
+                  download
+                  className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition"
+                >
+                  <Download className="w-5 h-5" />
+                  Download
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Accept/Decline Section */}
           {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
             <div className="mb-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
               <textarea
                 rows={3}
                 value={responseComment}
                 onChange={e => setResponseComment(e.target.value)}
-                className="w-full border rounded-lg p-3 mb-3"
-                placeholder="Add comments or questions (optional)"
+                className="w-full border-2 border-gray-300 rounded-lg p-4 mb-4 focus:border-blue-500 focus:outline-none"
+                placeholder="Add any comments or questions (optional)..."
               />
-              <div className="flex gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <button
                   onClick={() => handleRespond(false)}
                   disabled={responding}
-                  className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
+                  className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
                 >
-                  {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsDown className="w-5 h-5" />}
+                  {responding ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsDown className="w-6 h-6" />}
                   Decline
                 </button>
                 <button
                   onClick={() => handleRespond(true)}
                   disabled={responding}
-                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
+                  className="px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
                 >
-                  {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
+                  {responding ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsUp className="w-6 h-6" />}
                   Accept
                 </button>
               </div>
@@ -274,28 +361,15 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
           {/* RTR Section */}
           {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
-            <div className="bg-purple-50 p-6 rounded-xl text-center mb-6">
-              <h2 className="font-bold text-xl mb-4">Right to Represent Agreement Available</h2>
+            <div className="p-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-2xl text-center shadow-2xl">
+              <h2 className="text-2xl font-bold mb-4">Right to Represent Agreement Ready</h2>
+              <p className="mb-6">Your RTR document is ready for review and signature</p>
               <a
-                href={interest.right_to_represent_url}
-                target="_blank"
-                className="inline-block px-6 py-3 bg-purple-600 text-white rounded-lg font-bold shadow hover:bg-purple-700 transition"
+                href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}
+                className="inline-flex items-center gap-2 px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:shadow-xl transition"
               >
-                <FileText className="inline w-6 h-6 mr-2" />
-                View / Download RTR
-              </a>
-            </div>
-          )}
-
-          {/* Download/View CV */}
-          {interest.cv_url && (
-            <div className="mt-4">
-              <a
-                href={interest.cv_url}
-                target="_blank"
-                className="inline-block px-4 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 transition"
-              >
-                View / Download Your Uploaded CV
+                <FileText className="w-6 h-6" />
+                Review & Sign RTR
               </a>
             </div>
           )}
