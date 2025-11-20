@@ -1,9 +1,17 @@
 'use client'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
-import { 
-  Sparkles, Eye, FileText, CheckCircle, Award, 
-  ArrowRight, Clock, AlertCircle, MapPin, DollarSign 
+import {
+  Sparkles,
+  Eye,
+  FileText,
+  CheckCircle,
+  Award,
+  ArrowRight,
+  Clock,
+  AlertCircle,
+  MapPin,
+  DollarSign
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
@@ -12,11 +20,14 @@ import DynamicBackground from '@/components/ui/DynamicBackground'
 const fetcher = async () => {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
+
   const { data: candidateData } = await supabase
     .from('candidates')
     .select('id')
-    .eq('user_id', user?.id)
+    .eq('user_id', user.id)
     .single()
+
   if (!candidateData) return []
 
   const { data } = await supabase
@@ -28,36 +39,36 @@ const fetcher = async () => {
     `)
     .eq('candidate_id', candidateData.id)
     .order('created_at', { ascending: false })
+
   return data || []
 }
 
 function getStatusMessage(interest: any) {
-  // Enhanced, precise status logic
   if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-    return "[translate:Please review the job and respond with your acceptance or decline.]"
+    return 'Please review the job and respond with your acceptance or decline.'
   }
-  if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
-    return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
+  if (interest.status === 'interested') {
+    return 'Thank you for your interest! The agency will follow up with the next steps.'
   }
-  if (
-    interest.status === 'not_interested' ||
-    interest.status === 'rejected'
-  ) {
-    return "[translate:You have declined this opportunity.]"
+  if (interest.status === 'not_interested') {
+    return 'You have declined this opportunity.'
   }
   if (interest.status === 'rtr_ready') {
-    return "[translate:Your Right to Represent agreement is ready to sign.]"
+    return 'Your Right to Represent agreement is ready to sign.'
   }
   if (interest.status === 'pending_agency_action') {
-    return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
+    return 'Waiting for the agency to provide required documents. Please check back soon.'
   }
-  return ""
+  return ''
 }
 
 export default function CandidateInterestsPage() {
   const { data: interests } = useSWR('candidate-interests', fetcher, { refreshInterval: 5000 })
 
-  const unreadCount = interests?.filter((i: any) => !i.viewed_by_candidate).length || 0
+  const unreadCount =
+    interests?.filter(
+      (i: any) => !i.viewed_by_candidate && !i.candidate_responded_at
+    ).length || 0
 
   return (
     <div className="relative min-h-screen p-8">
@@ -70,7 +81,9 @@ export default function CandidateInterestsPage() {
             Your Opportunities
           </h1>
           <p className="text-xl text-gray-600">
-            {unreadCount > 0 ? `${unreadCount} new ${unreadCount === 1 ? 'opportunity' : 'opportunities'} waiting` : 'All caught up!'}
+            {unreadCount > 0
+              ? `${unreadCount} new ${unreadCount === 1 ? 'opportunity' : 'opportunities'} waiting`
+              : 'All caught up!'}
           </p>
         </div>
 
@@ -78,14 +91,16 @@ export default function CandidateInterestsPage() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-8 shadow-2xl">
+            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-8 shadow-2xl"
+          >
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center">
                 <AlertCircle className="w-10 h-10 animate-pulse" />
               </div>
               <div className="flex-1">
                 <h3 className="text-3xl font-bold mb-2">
-                  Action Required: {unreadCount} New {unreadCount === 1 ? 'Opportunity' : 'Opportunities'}!
+                  Action Required: {unreadCount} New{' '}
+                  {unreadCount === 1 ? 'Opportunity' : 'Opportunities'}!
                 </h3>
                 <p className="text-amber-100 text-lg">
                   Click on any opportunity below to review details, upload your CV, and respond
@@ -108,13 +123,13 @@ export default function CandidateInterestsPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  transition={{ delay: index * 0.05 }}>
+                  transition={{ delay: index * 0.05 }}
+                >
                   <Link href={`/dashboard/candidate/interests/${interest.id}`}>
                     <motion.div
                       whileHover={{ scale: 1.01, y: -4 }}
-                      className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-2xl transition cursor-pointer">
-                      
-                      {/* Enhanced: Status Message Banner */}
+                      className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-2xl transition cursor-pointer"
+                    >
                       {statusMsg && (
                         <div className="mb-4 p-4 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800 text-base font-medium">
                           {statusMsg}
@@ -123,17 +138,20 @@ export default function CandidateInterestsPage() {
 
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
-                          {/* Header */}
                           <div className="flex items-center gap-3 mb-4">
-                            <h2 className="text-3xl font-bold text-gray-900">{job.title}</h2>
-                            {!interest.viewed_by_candidate && (
-                              <motion.span
-                                animate={{ scale: [1, 1.1, 1] }}
-                                transition={{ repeat: Infinity, duration: 2 }}
-                                className="px-4 py-2 bg-red-500 text-white rounded-full text-sm font-bold">
-                                NEW - CLICK TO VIEW
-                              </motion.span>
-                            )}
+                            <h2 className="text-3xl font-bold text-gray-900">
+                              {job.title}
+                            </h2>
+                            {!interest.viewed_by_candidate &&
+                              !interest.candidate_responded_at && (
+                                <motion.span
+                                  animate={{ scale: [1, 1.1, 1] }}
+                                  transition={{ repeat: Infinity, duration: 2 }}
+                                  className="px-4 py-2 bg-red-500 text-white rounded-full text-sm font-bold"
+                                >
+                                  NEW - CLICK TO VIEW
+                                </motion.span>
+                              )}
                             {interest.ai_match_score && (
                               <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold flex items-center gap-1">
                                 <Award className="w-4 h-4" />
@@ -154,9 +172,16 @@ export default function CandidateInterestsPage() {
                           </div>
 
                           <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
-                            <span className="font-bold">From: {agency.full_name}</span>
+                            <span className="font-bold">
+                              From: {agency.full_name}
+                            </span>
                             {agency.company && <span>• {agency.company}</span>}
-                            <span>• {new Date(interest.created_at).toLocaleDateString()}</span>
+                            <span>
+                              •{' '}
+                              {new Date(
+                                interest.created_at
+                              ).toLocaleDateString()}
+                            </span>
                           </div>
 
                           <div className="flex gap-2 flex-wrap">
@@ -173,15 +198,21 @@ export default function CandidateInterestsPage() {
                               </span>
                             )}
                             {interest.candidate_responded_at && (
-                              <span className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
-                                interest.status === 'interested' ? 'bg-green-100 text-green-700' :
-                                interest.status === 'not_interested' ? 'bg-red-100 text-red-700' :
-                                'bg-blue-100 text-blue-700'
-                              }`}>
+                              <span
+                                className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
+                                  interest.status === 'interested'
+                                    ? 'bg-green-100 text-green-700'
+                                    : interest.status === 'not_interested'
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}
+                              >
                                 <CheckCircle className="w-4 h-4" />
-                                {interest.status === 'interested' ? 'Interested' :
-                                 interest.status === 'not_interested' ? 'Not Interested' :
-                                 'Needs Info'}
+                                {interest.status === 'interested'
+                                  ? 'Accepted - Pending Agency'
+                                  : interest.status === 'not_interested'
+                                  ? 'Declined'
+                                  : 'Responded'}
                               </span>
                             )}
                           </div>
@@ -190,18 +221,24 @@ export default function CandidateInterestsPage() {
                         <div className="ml-6 flex flex-col items-center gap-3">
                           <motion.div
                             whileHover={{ scale: 1.05 }}
-                            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-bold text-lg shadow-lg flex items-center gap-2">
-                            {!interest.viewed_by_candidate ? 'View Now' :
-                             !interest.cv_url ? 'Upload CV' :
-                             !interest.candidate_responded_at ? 'Respond' :
-                             'View Details'}
+                            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-bold text-lg shadow-lg flex items-center gap-2"
+                          >
+                            {!interest.viewed_by_candidate
+                              ? 'View Now'
+                              : !interest.cv_url
+                              ? 'Upload CV'
+                              : !interest.candidate_responded_at
+                              ? 'Respond'
+                              : 'View Details'}
                             <ArrowRight className="w-6 h-6" />
                           </motion.div>
                           {!interest.candidate_responded_at && (
                             <p className="text-sm text-gray-600 text-center">
-                              {!interest.viewed_by_candidate ? 'Click to review' :
-                               !interest.cv_url ? 'Upload your CV next' :
-                               'Complete your response'}
+                              {!interest.viewed_by_candidate
+                                ? 'Click to review'
+                                : !interest.cv_url
+                                ? 'Upload your CV next'
+                                : 'Complete your response'}
                             </p>
                           )}
                         </div>
@@ -216,9 +253,12 @@ export default function CandidateInterestsPage() {
           {(!interests || interests.length === 0) && (
             <div className="bg-white rounded-2xl p-20 text-center shadow-lg">
               <Clock className="w-32 h-32 text-gray-300 mx-auto mb-8" />
-              <h3 className="text-3xl font-bold text-gray-900 mb-4">No Opportunities Yet</h3>
+              <h3 className="text-3xl font-bold text-gray-900 mb-4">
+                No Opportunities Yet
+              </h3>
               <p className="text-xl text-gray-600">
-                Recruitment agencies will send you opportunities that match your profile
+                Recruitment agencies will send you opportunities that match your
+                profile
               </p>
             </div>
           )}
