@@ -94,22 +94,22 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
   function getStatusMessage(interest: any) {
     if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-      return "[translate:Please review the job and respond with your acceptance or decline.]"
+      return "Please review the job and respond with your acceptance or decline."
     }
     if (interest.status === 'interested' || interest.status === 'candidate_accepted') {
-      return "[translate:Thank you for your interest! The agency will follow up with the next steps.]"
+      return "Thank you for your interest! The agency will follow up with the next steps."
     }
     if (
       interest.status === 'not_interested' ||
       interest.status === 'rejected'
     ) {
-      return "[translate:You have declined this opportunity.]"
+      return "You have declined this opportunity."
     }
     if (interest.status === 'rtr_ready') {
-      return "[translate:Your Right to Represent agreement is ready to sign.]"
+      return "Your Right to Represent agreement is ready to sign."
     }
     if (interest.status === 'pending_agency_action') {
-      return "[translate:Waiting for the agency to provide required documents. Please check back soon.]"
+      return "Waiting for the agency to provide required documents. Please check back soon."
     }
     return ""
   }
@@ -189,7 +189,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
                 >
                   {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsDown className="w-5 h-5" />}
-                  [translate:Decline]
+                  Decline
                 </button>
                 <button
                   onClick={() => handleRespond(true)}
@@ -197,7 +197,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold disabled:opacity-50 flex items-center gap-2 justify-center"
                 >
                   {responding ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
-                  [translate:Accept]
+                  Accept
                 </button>
               </div>
             </div>
@@ -206,16 +206,15 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           {/* RTR Section */}
           {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
             <div className="bg-purple-50 p-6 rounded-xl text-center mb-6">
-              <h2 className="font-bold text-xl mb-4">[translate:Right to Represent Agreement Available]</h2>
+              <h2 className="font-bold text-xl mb-4">Right to Represent Agreement Available</h2>
               <a
                 href={interest.right_to_represent_url}
                 target="_blank"
                 className="inline-block px-6 py-3 bg-purple-600 text-white rounded-lg font-bold shadow hover:bg-purple-700 transition"
               >
                 <FileText className="inline w-6 h-6 mr-2" />
-                [translate:View / Download RTR]
+                View / Download RTR
               </a>
-              {/* Optional e-sign logic goes here */}
             </div>
           )}
         </div>
