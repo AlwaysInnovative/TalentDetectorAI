@@ -63,7 +63,7 @@ function getStatusMessage(interest: any) {
 }
 
 export default function CandidateInterestsPage() {
-  const { data: interests } = useSWR('candidate-interests', fetcher, { refreshInterval: 5000 })
+  const { data: interests } = useSWR('candidate-interests', fetcher, { refreshInterval: 30000 })
 
   const unreadCount =
     interests?.filter(
