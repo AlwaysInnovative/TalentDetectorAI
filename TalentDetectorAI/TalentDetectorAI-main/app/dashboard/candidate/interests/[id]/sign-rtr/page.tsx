@@ -11,7 +11,8 @@ import {
   Shield,
   Award,
   Clock,
-  Download
+  Download,
+  Sparkles
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -37,31 +38,58 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
   async function loadInterest() {
     try {
       const supabase = createClient()
-      const { data, error } = await supabase
+      
+      // First, fetch the interest without joins
+      const { data: interestData, error: interestError } = await supabase
         .from('candidate_interests')
-        .select(`
-          *,
-          jobs(title, company, location),
-          profiles!candidate_interests_agency_id_fkey(full_name, company, email),
-          candidates(name)
-        `)
+        .select('*')
         .eq('id', params.id)
         .single()
 
-      if (error) throw error
+      if (interestError) throw interestError
 
-      setInterest(data)
+      // Fetch related data separately
+      const [jobRes, agencyRes, candidateRes] = await Promise.all([
+        supabase
+          .from('jobs')
+          .select('*')
+          .eq('id', interestData.job_id)
+          .single(),
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', interestData.agency_id)
+          .single(),
+        supabase
+          .from('candidates')
+          .select('*')
+          .eq('id', interestData.candidate_id)
+          .single()
+      ])
 
-      if (data.right_to_represent_signed) {
+      if (jobRes.error) throw new Error('Could not load job information')
+      if (candidateRes.error) throw new Error('Could not load candidate information')
+
+      // Combine the data
+      const completeInterest = {
+        ...interestData,
+        jobs: jobRes.data,
+        profiles: agencyRes.error ? null : agencyRes.data,
+        candidates: candidateRes.data
+      }
+
+      setInterest(completeInterest)
+
+      if (completeInterest.right_to_represent_signed) {
         setShowSuccess(true)
       }
 
-      if (!data.right_to_represent_url) {
+      if (!completeInterest.right_to_represent_url) {
         toast.error('RTR document is not available yet')
       }
     } catch (error: any) {
       console.error('Load error:', error)
-      toast.error('Failed to load document')
+      toast.error(error.message || 'Failed to load document')
     } finally {
       setLoading(false)
     }
@@ -221,7 +249,7 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
               </div>
               <div className="text-left">
                 <p className="text-gray-600 font-bold mb-1">Agency</p>
-                <p className="text-gray-900">{agency.full_name}</p>
+                <p className="text-gray-900">{agency?.full_name || 'Agency'}</p>
               </div>
               <div className="text-left">
                 <p className="text-gray-600 font-bold mb-1">Signed At</p>
@@ -431,8 +459,8 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
 
                 <div>
                   <p className="text-gray-600 font-bold mb-1">Agency</p>
-                  <p className="text-gray-900">{agency.full_name}</p>
-                  {agency.company && (
+                  <p className="text-gray-900">{agency?.full_name || 'Agency'}</p>
+                  {agency?.company && (
                     <p className="text-gray-600 text-xs">{agency.company}</p>
                   )}
                 </div>
@@ -499,9 +527,11 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
                 our support team.
               </p>
               <div className="space-y-2 text-sm">
-                <p className="text-gray-600">
-                  <span className="font-bold">Agency:</span> {agency.email}
-                </p>
+                {agency?.email && (
+                  <p className="text-gray-600">
+                    <span className="font-bold">Agency:</span> {agency.email}
+                  </p>
+                )}
                 <p className="text-gray-600">
                   <span className="font-bold">Support:</span> support@talentdetector.ai
                 </p>
