@@ -90,18 +90,36 @@ export default function InterestedCandidatesPage() {
         .from('candidate_interests')
         .select(`
           *,
-          candidates(id, name, email, phone, location, user_id, skills),
-          jobs(id, title, location, salary_min, salary_max)
+          candidates!candidate_interests_candidate_id_fkey(
+            id,
+            name,
+            email,
+            phone,
+            location,
+            user_id,
+            skills
+          ),
+          jobs!candidate_interests_job_id_fkey(
+            id,
+            title,
+            location,
+            salary_min,
+            salary_max
+          )
         `)
         .eq('agency_id', user.id)
         .in('status', ['sent', 'interested', 'not_interested', 'rtr_ready'])
         .order('created_at', { ascending: false })
 
-      if (error) throw error
+      if (error) {
+        console.error('Load interests error:', error)
+        throw error
+      }
 
       setInterests((data || []) as any)
     } catch (err) {
       console.error('Load interests error:', err)
+      toast.error('Failed to load candidate interests')
     } finally {
       setLoading(false)
     }
@@ -257,13 +275,13 @@ export default function InterestedCandidatesPage() {
                       </p>
                       <p>
                         Accepted:{' '}
-                          <span className="font-bold text-green-600">
+                        <span className="font-bold text-green-600">
                           {items.filter((i) => i.status === 'interested').length}
                         </span>
                       </p>
                       <p>
                         Declined:{' '}
-                          <span className="font-bold text-red-600">
+                        <span className="font-bold text-red-600">
                           {items.filter((i) => i.status === 'not_interested').length}
                         </span>
                       </p>
