@@ -43,25 +43,64 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         return
       }
 
+      // First, try to fetch the interest without the profiles join
       const { data, error: fetchError } = await supabase
         .from('candidate_interests')
         .select(`
           *,
-          candidates(id, name, email, phone, location, skills),
-          jobs(id, title, description, location, salary_min, salary_max, employment_type, company),
-          profiles!candidate_interests_agency_id_fkey(id, full_name, company, email, phone)
+          candidates!candidate_interests_candidate_id_fkey(
+            id,
+            name,
+            email,
+            phone,
+            location,
+            skills
+          ),
+          jobs!candidate_interests_job_id_fkey(
+            id,
+            title,
+            description,
+            location,
+            salary_min,
+            salary_max,
+            employment_type,
+            company
+          )
         `)
         .eq('id', params.id)
         .eq('agency_id', user.id)
         .single()
 
       if (fetchError || !data) {
+        console.error('Fetch error:', fetchError)
         setError('Interest not found or not assigned to you')
         return
       }
 
+      // Separately fetch the agency profile
+      const { data: agencyProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, full_name, company, email, phone')
+        .eq('id', data.agency_id)
+        .single()
+
+      if (profileError) {
+        console.warn('Could not fetch agency profile:', profileError)
+        // Create a fallback profile object
+        data.profiles = {
+          id: data.agency_id,
+          full_name: 'Agency User',
+          company: null,
+          email: user.email || '',
+          phone: null
+        }
+      } else {
+        data.profiles = agencyProfile
+      }
+
       setInterest(data)
     } catch (err: any) {
+      console.error('Load interest error:', err)
       setError(err?.message || 'Failed to load interest detail')
     } finally {
       setLoading(false)
@@ -381,7 +420,7 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
                       : 'Awaiting candidate signature'}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Use “Regenerate RTR” if terms changed or you need to resend a corrected
+                    Use "Regenerate RTR" if terms changed or you need to resend a corrected
                     version. The candidate will receive a fresh notification and link.
                   </p>
                 </div>
