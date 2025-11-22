@@ -24,8 +24,7 @@ export function useRealtimeInterests(candidateId: string) {
           table: 'candidate_interests',
           filter: `candidate_id=eq.${candidateId}`
         },
-        (payload) => {
-          console.log('Interest updated:', payload)
+        () => {
           loadInterests()
         }
       )
@@ -38,8 +37,7 @@ export function useRealtimeInterests(candidateId: string) {
 
   async function loadInterests() {
     const supabase = createClient()
-    
-    // Fetch interest IDs first
+
     const { data: interestData } = await supabase
       .from('candidate_interests')
       .select('*')
@@ -51,7 +49,7 @@ export function useRealtimeInterests(candidateId: string) {
       return
     }
 
-    // Fetch related data separately for each interest
+    // Fetch related data for each interest (jobs and agency profiles)
     const enrichedInterests = await Promise.all(
       interestData.map(async (interest) => {
         const [jobRes, agencyRes] = await Promise.all([
@@ -71,5 +69,5 @@ export function useRealtimeInterests(candidateId: string) {
     setLoading(false)
   }
 
-  return { interests, loading, refresh: loadInterests }
+  return { interests, loading }
 }
