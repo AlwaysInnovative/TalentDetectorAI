@@ -43,62 +43,69 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         return
       }
 
-      // First, try to fetch the interest without the profiles join
-      const { data, error: fetchError } = await supabase
+      // Fetch the interest record first
+      const { data: interestData, error: interestError } = await supabase
         .from('candidate_interests')
-        .select(`
-          *,
-          candidates!candidate_interests_candidate_id_fkey(
-            id,
-            name,
-            email,
-            phone,
-            location,
-            skills
-          ),
-          jobs!candidate_interests_job_id_fkey(
-            id,
-            title,
-            description,
-            location,
-            salary_min,
-            salary_max,
-            employment_type,
-            company
-          )
-        `)
+        .select('*')
         .eq('id', params.id)
         .eq('agency_id', user.id)
         .single()
 
-      if (fetchError || !data) {
-        console.error('Fetch error:', fetchError)
+      if (interestError || !interestData) {
+        console.error('Interest fetch error:', interestError)
         setError('Interest not found or not assigned to you')
         return
       }
 
-      // Separately fetch the agency profile
-      const { data: agencyProfile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, full_name, company, email, phone')
-        .eq('id', data.agency_id)
-        .single()
+      // Now fetch the related data separately using the IDs
+      const [candidateRes, jobRes, agencyRes] = await Promise.all([
+        supabase
+          .from('candidates')
+          .select('id, name, email, phone, location, skills')
+          .eq('id', interestData.candidate_id)
+          .single(),
+        supabase
+          .from('jobs')
+          .select('id, title, description, location, salary_min, salary_max, employment_type, company')
+          .eq('id', interestData.job_id)
+          .single(),
+        supabase
+          .from('profiles')
+          .select('id, full_name, company, email, phone')
+          .eq('id', interestData.agency_id)
+          .single()
+      ])
 
-      if (profileError) {
-        console.warn('Could not fetch agency profile:', profileError)
-        // Create a fallback profile object
-        data.profiles = {
-          id: data.agency_id,
-          full_name: 'Agency User',
-          company: null,
-          email: user.email || '',
-          phone: null
-        }
-      } else {
-        data.profiles = agencyProfile
+      // Check for errors
+      if (candidateRes.error) {
+        console.error('Candidate fetch error:', candidateRes.error)
+        setError('Could not load candidate information')
+        return
       }
 
-      setInterest(data)
+      if (jobRes.error) {
+        console.error('Job fetch error:', jobRes.error)
+        setError('Could not load job information')
+        return
+      }
+
+      // Build the complete interest object
+      const completeInterest = {
+        ...interestData,
+        candidates: candidateRes.data,
+        jobs: jobRes.data,
+        profiles: agencyRes.error
+          ? {
+              id: interestData.agency_id,
+              full_name: 'Agency User',
+              company: null,
+              email: user.email || '',
+              phone: null
+            }
+          : agencyRes.data
+      }
+
+      setInterest(completeInterest)
     } catch (err: any) {
       console.error('Load interest error:', err)
       setError(err?.message || 'Failed to load interest detail')
