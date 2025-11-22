@@ -155,7 +155,7 @@ export async function POST(request: Request) {
       .upload(fileName, rtrContent, { 
         contentType: 'text/plain', 
         upsert: true, 
-        cacheControl: '0' 
+        cacheControl: '3600'
       })
     
     if (uploadError) {
@@ -168,14 +168,15 @@ export async function POST(request: Request) {
       .from('documents')
       .getPublicUrl(fileName)
 
-    // Update candidate_interests - KEEP EXISTING STATUS, don't change it to rtr_ready
+    console.log('✅ Generated RTR URL:', publicUrl)
+
+    // Update candidate_interests - KEEP EXISTING STATUS, don't change it
     const { error: updateError } = await supabaseAdmin
       .from('candidate_interests')
       .update({
         right_to_represent_url: publicUrl,
         right_to_represent_signed: false,  // Reset signature status
         agency_notes: `RTR (re)generated on ${new Date().toISOString()}`
-        // ✅ REMOVED: status: 'rtr_ready' - this was causing the constraint violation
       })
       .eq('id', interestId)
     
@@ -184,7 +185,7 @@ export async function POST(request: Request) {
       throw new Error(`Update failed: ${updateError.message}`)
     }
 
-    // Send notifications
+    // Send notifications with CORRECT LINKS
     await Promise.all([
       candidate?.user_id &&
         supabaseAdmin.from('notifications').insert({
@@ -192,9 +193,14 @@ export async function POST(request: Request) {
           type: 'rtr_ready',
           title: '✍️ RTR ready to sign',
           message: `Your Right-to-Represent agreement for "${job.title}" is ready (or has been updated) and awaits your signature.`,
-          link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,
+          link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,  // ✅ FIXED - Direct link to sign page
           ai_priority: 'high',
-          metadata: { interest_id: interestId, job_title: job.title, regenerated: true }
+          metadata: { 
+            interest_id: interestId, 
+            job_title: job.title, 
+            rtr_url: publicUrl,
+            regenerated: true 
+          }
         }),
       supabaseAdmin.from('notifications').insert({
         user_id: interest.agency_id,
