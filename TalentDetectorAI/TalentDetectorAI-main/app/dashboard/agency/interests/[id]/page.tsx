@@ -37,12 +37,19 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
       setLoading(true)
       setError(null)
       const supabase = createClient()
+      
+      console.log('🔍 Step 1: Getting user...')
       const { data: { user } } = await supabase.auth.getUser()
+      console.log('👤 User:', user?.id)
+      
       if (!user) {
         setError('Not logged in as agency user')
         return
       }
 
+      console.log('🔍 Step 2: Fetching interest with ID:', params.id)
+      console.log('🔍 Agency ID:', user.id)
+      
       // Fetch the interest record first
       const { data: interestData, error: interestError } = await supabase
         .from('candidate_interests')
@@ -51,50 +58,70 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         .eq('agency_id', user.id)
         .single()
 
+      console.log('📊 Interest data:', interestData)
+      console.log('❌ Interest error:', interestError)
+
       if (interestError || !interestData) {
-        console.error('Interest fetch error:', interestError)
+        console.error('❌ FAILED at interest fetch:', interestError)
         setError('Interest not found or not assigned to you')
         return
       }
 
-      // Now fetch the related data separately using the IDs
-      const [candidateRes, jobRes, agencyRes] = await Promise.all([
-        supabase
-          .from('candidates')
-          .select('id, name, email, phone, location, skills')
-          .eq('id', interestData.candidate_id)
-          .single(),
-        supabase
-          .from('jobs')
-          .select('id, title, description, location, salary_min, salary_max, employment_type, company')
-          .eq('id', interestData.job_id)
-          .single(),
-        supabase
-          .from('profiles')
-          .select('id, full_name, company, email, phone')
-          .eq('id', interestData.agency_id)
-          .single()
-      ])
+      console.log('✅ Interest found! candidate_id:', interestData.candidate_id)
+      console.log('✅ Interest found! job_id:', interestData.job_id)
+      console.log('✅ Interest found! agency_id:', interestData.agency_id)
 
-      // Check for errors
-      if (candidateRes.error) {
-        console.error('Candidate fetch error:', candidateRes.error)
+      // Now fetch candidate
+      console.log('🔍 Step 3: Fetching candidate...')
+      const { data: candidateData, error: candidateError } = await supabase
+        .from('candidates')
+        .select('id, name, email, phone, location, skills')
+        .eq('id', interestData.candidate_id)
+        .single()
+      
+      console.log('📊 Candidate data:', candidateData)
+      console.log('❌ Candidate error:', candidateError)
+
+      if (candidateError || !candidateData) {
+        console.error('❌ FAILED at candidate fetch')
         setError('Could not load candidate information')
         return
       }
 
-      if (jobRes.error) {
-        console.error('Job fetch error:', jobRes.error)
+      // Fetch job
+      console.log('🔍 Step 4: Fetching job...')
+      const { data: jobData, error: jobError } = await supabase
+        .from('jobs')
+        .select('id, title, description, location, salary_min, salary_max, employment_type, company')
+        .eq('id', interestData.job_id)
+        .single()
+      
+      console.log('📊 Job data:', jobData)
+      console.log('❌ Job error:', jobError)
+
+      if (jobError || !jobData) {
+        console.error('❌ FAILED at job fetch')
         setError('Could not load job information')
         return
       }
 
+      // Fetch agency profile
+      console.log('🔍 Step 5: Fetching agency profile...')
+      const { data: agencyData, error: agencyError } = await supabase
+        .from('profiles')
+        .select('id, full_name, company, email, phone')
+        .eq('id', interestData.agency_id)
+        .single()
+      
+      console.log('📊 Agency data:', agencyData)
+      console.log('❌ Agency error:', agencyError)
+
       // Build the complete interest object
       const completeInterest = {
         ...interestData,
-        candidates: candidateRes.data,
-        jobs: jobRes.data,
-        profiles: agencyRes.error
+        candidates: candidateData,
+        jobs: jobData,
+        profiles: agencyError
           ? {
               id: interestData.agency_id,
               full_name: 'Agency User',
@@ -102,12 +129,13 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
               email: user.email || '',
               phone: null
             }
-          : agencyRes.data
+          : agencyData
       }
 
+      console.log('✅ COMPLETE INTEREST:', completeInterest)
       setInterest(completeInterest)
     } catch (err: any) {
-      console.error('Load interest error:', err)
+      console.error('💥 CAUGHT ERROR:', err)
       setError(err?.message || 'Failed to load interest detail')
     } finally {
       setLoading(false)
