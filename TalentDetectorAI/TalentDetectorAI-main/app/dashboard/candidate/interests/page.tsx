@@ -1,5 +1,5 @@
 'use client'
-import useSWR from 'swr'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   Sparkles,
@@ -16,32 +16,6 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import DynamicBackground from '@/components/ui/DynamicBackground'
-
-const fetcher = async () => {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return []
-
-  const { data: candidateData } = await supabase
-    .from('candidates')
-    .select('id')
-    .eq('user_id', user.id)
-    .single()
-
-  if (!candidateData) return []
-
-  const { data } = await supabase
-    .from('candidate_interests')
-    .select(`
-      *,
-      jobs(*),
-      profiles!candidate_interests_agency_id_fkey(full_name, company)
-    `)
-    .eq('candidate_id', candidateData.id)
-    .order('created_at', { ascending: false })
-
-  return data || []
-}
 
 function getStatusMessage(interest: any) {
   if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
@@ -63,12 +37,106 @@ function getStatusMessage(interest: any) {
 }
 
 export default function CandidateInterestsPage() {
-  const { data: interests } = useSWR('candidate-interests', fetcher, { refreshInterval: 30000 })
+  const [candidateId, setCandidateId] = useState<string>('')
+  const [interests, setInterests] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchCandidateId() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data } = await supabase
+          .from('candidates')
+          .select('id')
+          .eq('user_id', user.id)
+          .single()
+        if (data) setCandidateId(data.id)
+      }
+    }
+    fetchCandidateId()
+  }, [])
+
+  useEffect(() => {
+    if (!candidateId) return
+
+    const supabase = createClient()
+    setLoading(true)
+
+    // Initial fetch
+    async function loadInterests() {
+      const { data } = await supabase
+        .from('candidate_interests')
+        .select('*')
+        .eq('candidate_id', candidateId)
+        .order('created_at', { ascending: false })
+      if (data) setInterests(data)
+      setLoading(false)
+    }
+    loadInterests()
+
+    // Realtime subscription
+    const channel = supabase
+      .channel(`candidate_interests_${candidateId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'candidate_interests',
+          filter: `candidate_id=eq.${candidateId}`
+        },
+        () => {
+          loadInterests()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [candidateId])
+
+  // Enrich interests with related jobs and agencies (better to cache or batch in real app)
+  const [enrichedInterests, setEnrichedInterests] = useState<any[]>([])
+
+  useEffect(() => {
+    async function enrichData() {
+      if (!interests.length) {
+        setEnrichedInterests([])
+        return
+      }
+      const supabase = createClient()
+      const enriched = await Promise.all(
+        interests.map(async (interest) => {
+          const [jobRes, agencyRes] = await Promise.all([
+            supabase.from('jobs').select('*').eq('id', interest.job_id).single(),
+            supabase.from('profiles').select('*').eq('id', interest.agency_id).single()
+          ])
+          return {
+            ...interest,
+            jobs: jobRes.data,
+            profiles: agencyRes.data
+          }
+        })
+      )
+      setEnrichedInterests(enriched)
+    }
+    enrichData()
+  }, [interests])
 
   const unreadCount =
-    interests?.filter(
+    enrichedInterests.filter(
       (i: any) => !i.viewed_by_candidate && !i.candidate_responded_at
     ).length || 0
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-16 h-16 animate-spin text-blue-600" />
+      </div>
+    )
+  }
 
   return (
     <div className="relative min-h-screen p-8">
@@ -112,7 +180,7 @@ export default function CandidateInterestsPage() {
 
         <div className="space-y-6">
           <AnimatePresence>
-            {interests?.map((interest: any, index: number) => {
+            {enrichedInterests.map((interest: any, index: number) => {
               const job = interest.jobs
               const agency = interest.profiles
               const statusMsg = getStatusMessage(interest)
@@ -140,7 +208,7 @@ export default function CandidateInterestsPage() {
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-4">
                             <h2 className="text-3xl font-bold text-gray-900">
-                              {job.title}
+                              {job?.title || 'Title not available'}
                             </h2>
                             {!interest.viewed_by_candidate &&
                               !interest.candidate_responded_at && (
@@ -163,19 +231,19 @@ export default function CandidateInterestsPage() {
                           <div className="flex flex-wrap gap-4 mb-4">
                             <span className="flex items-center gap-2 text-gray-600">
                               <MapPin className="w-5 h-5" />
-                              {job.location}
+                              {job?.location || 'Location not provided'}
                             </span>
                             <span className="flex items-center gap-2 text-gray-600">
                               <DollarSign className="w-5 h-5" />
-                              {interest.salary_range}
+                              {interest.salary_range || 'Salary range N/A'}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
                             <span className="font-bold">
-                              From: {agency.full_name}
+                              From: {agency?.full_name || 'Agency'}
                             </span>
-                            {agency.company && <span>• {agency.company}</span>}
+                            {agency?.company && <span>• {agency.company}</span>}
                             <span>
                               •{' '}
                               {new Date(
@@ -250,7 +318,7 @@ export default function CandidateInterestsPage() {
             })}
           </AnimatePresence>
 
-          {(!interests || interests.length === 0) && (
+          {(!enrichedInterests || enrichedInterests.length === 0) && (
             <div className="bg-white rounded-2xl p-20 text-center shadow-lg">
               <Clock className="w-32 h-32 text-gray-300 mx-auto mb-8" />
               <h3 className="text-3xl font-bold text-gray-900 mb-4">
