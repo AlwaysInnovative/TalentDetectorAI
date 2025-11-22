@@ -71,11 +71,11 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
       console.log('✅ Interest found! job_id:', interestData.job_id)
       console.log('✅ Interest found! agency_id:', interestData.agency_id)
 
-      // Now fetch candidate
+      // Now fetch candidate - using * to get all columns
       console.log('🔍 Step 3: Fetching candidate...')
       const { data: candidateData, error: candidateError } = await supabase
         .from('candidates')
-        .select('id, name, email, phone, location, skills')
+        .select('*')
         .eq('id', interestData.candidate_id)
         .single()
       
@@ -88,11 +88,11 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         return
       }
 
-      // Fetch job
+      // Fetch job - using * to get all columns and avoid RLS issues
       console.log('🔍 Step 4: Fetching job...')
       const { data: jobData, error: jobError } = await supabase
         .from('jobs')
-        .select('id, title, description, location, salary_min, salary_max, employment_type, company')
+        .select('*')
         .eq('id', interestData.job_id)
         .single()
       
@@ -100,16 +100,16 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
       console.log('❌ Job error:', jobError)
 
       if (jobError || !jobData) {
-        console.error('❌ FAILED at job fetch')
+        console.error('❌ FAILED at job fetch:', jobError)
         setError('Could not load job information')
         return
       }
 
-      // Fetch agency profile
+      // Fetch agency profile - using * to get all columns
       console.log('🔍 Step 5: Fetching agency profile...')
       const { data: agencyData, error: agencyError } = await supabase
         .from('profiles')
-        .select('id, full_name, company, email, phone')
+        .select('*')
         .eq('id', interestData.agency_id)
         .single()
       
