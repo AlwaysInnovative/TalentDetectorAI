@@ -53,23 +53,23 @@ export async function POST(request: Request) {
       .eq('document_type', 'rtr_signature')
       .single()
 
-    // Create PDF
+    // Create PDF in memory
     const doc = new PDFDocument({ 
       margin: 50,
       size: 'A4',
       bufferPages: true
     })
 
-    const chunks: Buffer[] = []
+    const chunks: Uint8Array[] = []
     doc.on('data', (chunk) => chunks.push(chunk))
 
     // Header
-    doc.fontSize(24)
+    doc.font('Helvetica-Bold').fontSize(24)
       .fillColor('#1e40af')
       .text('RIGHT TO REPRESENT AGREEMENT', { align: 'center' })
     
     doc.moveDown(0.5)
-    doc.fontSize(10)
+    doc.font('Helvetica').fontSize(10)
       .fillColor('#666')
       .text('Powered by TalentDetector AI', { align: 'center' })
     
@@ -153,13 +153,12 @@ export async function POST(request: Request) {
     doc.moveDown(0.5)
 
     if (signatureDoc?.metadata) {
-      doc.fontSize(20)
+      doc.font('Helvetica-Bold').fontSize(20)
         .fillColor('#1e40af')
-        .font('Helvetica-Bold')
         .text(signatureDoc.metadata.signed_by_name, { align: 'center' })
       
       doc.moveDown(0.5)
-      doc.fontSize(10).fillColor('#666').font('Helvetica')
+      doc.font('Helvetica').fontSize(10).fillColor('#666')
       doc.text(`Signed Date: ${new Date(signatureDoc.metadata.signed_at).toLocaleString()}`, { align: 'center' })
       doc.text(`IP Address: ${signatureDoc.metadata.ip_address}`, { align: 'center' })
       doc.text(`Signature Hash: ${signatureDoc.metadata.signature_hash}`, { align: 'center' })
@@ -175,45 +174,39 @@ export async function POST(request: Request) {
 
     doc.end()
 
-    // Wait for PDF generation
-    const pdfBuffer = await new Promise<Buffer>((resolve) => {
-      doc.on('end', () => resolve(Buffer.concat(chunks)))
+    // Collect PDF buffer
+    const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const buffers: Buffer[] = []
+      doc.on('data', buffers.push.bind(buffers))
+      doc.on('end', () => resolve(Buffer.concat(buffers)))
+      doc.on('error', reject)
     })
 
-    // Upload PDF to storage
-    const pdfFileName = `rtr/signed/${interestId}.pdf`
+    const fileName = `rtr/signed/${interestId}.pdf`
     const { error: uploadError } = await supabaseAdmin.storage
       .from('documents')
-      .upload(pdfFileName, pdfBuffer, {
+      .upload(fileName, pdfBuffer, {
         contentType: 'application/pdf',
         upsert: true,
         cacheControl: '3600'
       })
 
     if (uploadError) {
-      console.error('PDF upload error:', uploadError)
-      throw new Error(`Failed to upload PDF: ${uploadError.message}`)
+      throw new Error(uploadError.message)
     }
 
-    // Get public URL
     const { data: { publicUrl } } = supabaseAdmin.storage
       .from('documents')
-      .getPublicUrl(pdfFileName)
+      .getPublicUrl(fileName)
 
-    // Update interest with PDF URL
     await supabaseAdmin
       .from('candidate_interests')
       .update({ right_to_represent_pdf_url: publicUrl })
       .eq('id', interestId)
 
-    return NextResponse.json({ 
-      success: true, 
-      pdf_url: publicUrl 
-    })
+    return NextResponse.json({ success: true, pdf_url: publicUrl })
   } catch (err: any) {
     console.error('PDF generation error:', err)
-    return NextResponse.json({ 
-      error: err.message || 'Failed to generate PDF' 
-    }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Failed to generate PDF' }, { status: 500 })
   }
 }
