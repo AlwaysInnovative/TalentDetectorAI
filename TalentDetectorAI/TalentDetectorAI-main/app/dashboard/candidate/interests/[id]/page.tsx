@@ -91,6 +91,35 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     }
   }
 
+  // Real-time subscription for live updates
+  useEffect(() => {
+    if (!interest?.id) return
+
+    const supabase = createClient()
+    
+    const channel = supabase
+      .channel(`interest_${interest.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'candidate_interests',
+          filter: `id=eq.${interest.id}`
+        },
+        (payload) => {
+          console.log('🔄 Interest updated in real-time:', payload)
+          loadInterest()
+          toast.success('Status updated!')
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [interest?.id])
+
   async function handleUploadCv() {
     if (!cvFile) {
       toast.error('Please select a CV file first')
@@ -386,6 +415,62 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* RTR STATUS SECTION - CRUCIAL FIX */}
+          {interest.right_to_represent_url && (
+            <div className="mb-8">
+              {!interest.right_to_represent_signed ? (
+                <div className="p-6 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl shadow-2xl">
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center flex-shrink-0">
+                        <FileText className="w-8 h-8 animate-pulse" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-2xl font-bold mb-2">
+                          ✍️ RTR Agreement Ready to Sign
+                        </h3>
+                        <p className="text-amber-100 text-lg">
+                          Your Right-to-Represent agreement has been generated and is waiting for your signature
+                        </p>
+                      </div>
+                    </div>
+                    <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
+                      <button className="px-8 py-4 bg-white text-orange-600 rounded-xl font-bold text-lg hover:shadow-2xl transition flex items-center gap-2 whitespace-nowrap">
+                        <FileText className="w-6 h-6" />
+                        Sign RTR Now
+                      </button>
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 bg-green-50 rounded-2xl border-2 border-green-300">
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div className="flex items-center gap-4 flex-1">
+                      <CheckCircle className="w-12 h-12 text-green-600 flex-shrink-0" />
+                      <div>
+                        <h3 className="text-xl font-bold text-gray-900">RTR Agreement Signed ✅</h3>
+                        <p className="text-sm text-gray-600">
+                          Signed on {new Date(interest.right_to_represent_signed_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    {interest.right_to_represent_pdf_url && (
+                      <a
+                        href={interest.right_to_represent_pdf_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition flex items-center gap-2"
+                      >
+                        <Download className="w-5 h-5" />
+                        Download Signed RTR
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
             <div className="mb-8">
               <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
@@ -422,19 +507,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   Accept
                 </button>
               </div>
-            </div>
-          )}
-
-          {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
-            <div className="p-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-2xl text-center shadow-2xl">
-              <h2 className="text-2xl font-bold mb-4">Right to Represent Agreement Ready</h2>
-              <p className="mb-6">Your RTR document is ready for review and signature</p>
-              <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
-                <button className="inline-flex items-center gap-2 px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:shadow-xl transition">
-                  <FileText className="w-6 h-6" />
-                  Review & Sign RTR
-                </button>
-              </Link>
             </div>
           )}
         </div>
