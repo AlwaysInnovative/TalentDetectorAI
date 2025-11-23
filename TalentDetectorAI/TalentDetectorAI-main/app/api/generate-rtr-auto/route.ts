@@ -119,7 +119,6 @@ export async function POST(request: Request) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // Fetch candidate interest
     const { data: interest, error: fetchError } = await supabaseAdmin
       .from('candidate_interests')
       .select('*')
@@ -146,6 +145,7 @@ export async function POST(request: Request) {
 
     const rtrContent = generateRTRContent(interest, candidate, job, agency)
     const fileName = `rtr/${interestId}.txt`
+    
     const { error: uploadError } = await supabaseAdmin.storage
       .from('documents')
       .upload(fileName, rtrContent, { 
@@ -158,20 +158,19 @@ export async function POST(request: Request) {
 
     const { data: { publicUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(fileName)
 
-    // CRUCIAL FIX: Update with status - 'rtr_ready'
+    // Use rtr_status field instead of status
     const { error: updateError } = await supabaseAdmin
       .from('candidate_interests')
       .update({
         right_to_represent_url: publicUrl,
         right_to_represent_signed: false,
-        status: 'rtr_ready',
+        rtr_status: 'ready',
         agency_notes: `RTR (re)generated on ${new Date().toISOString()}`
       })
       .eq('id', interestId)
     
     if (updateError) throw new Error(`Update failed: ${updateError.message}`)
 
-    // Send notifications
     await Promise.all([
       candidate?.user_id &&
         supabaseAdmin.from('notifications').insert({
