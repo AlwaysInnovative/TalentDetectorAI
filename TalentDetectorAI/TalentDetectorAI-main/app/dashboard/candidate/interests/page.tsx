@@ -11,7 +11,8 @@ import {
   Clock,
   AlertCircle,
   MapPin,
-  DollarSign
+  DollarSign,
+  Loader2
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
