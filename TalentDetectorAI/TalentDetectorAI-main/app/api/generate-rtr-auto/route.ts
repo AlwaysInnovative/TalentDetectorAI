@@ -119,36 +119,32 @@ export async function POST(request: Request) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // Fetch interest with all related data
+    // Fetch candidate interest
     const { data: interest, error: fetchError } = await supabaseAdmin
       .from('candidate_interests')
-      .select(`
-        *,
-        candidates(id, name, email, phone, location, user_id),
-        jobs(id, title, location, salary_min, salary_max, employment_type),
-        profiles!candidate_interests_agency_id_fkey(id, full_name, company, email, phone)
-      `)
+      .select('*')
       .eq('id', interestId)
       .single()
 
     if (fetchError || !interest) {
-      console.error('Fetch error:', fetchError)
       throw new Error(`Interest not found: ${fetchError?.message || ''}`)
     }
 
-    const candidate = interest.candidates
-    const job = interest.jobs
-    const agency = interest.profiles
+    const [candidateRes, jobRes, agencyRes] = await Promise.all([
+      supabaseAdmin.from('candidates').select('*').eq('id', interest.candidate_id).single(),
+      supabaseAdmin.from('jobs').select('*').eq('id', interest.job_id).single(),
+      supabaseAdmin.from('profiles').select('*').eq('id', interest.agency_id).single()
+    ])
 
-    // Validate that we have all required data
+    const candidate = candidateRes.data
+    const job = jobRes.data
+    const agency = agencyRes.data
+
     if (!candidate || !job || !agency) {
       throw new Error('Missing required data: candidate, job, or agency information')
     }
 
-    // Generate RTR content
     const rtrContent = generateRTRContent(interest, candidate, job, agency)
-
-    // Upload to storage
     const fileName = `rtr/${interestId}.txt`
     const { error: uploadError } = await supabaseAdmin.storage
       .from('documents')
@@ -158,58 +154,43 @@ export async function POST(request: Request) {
         cacheControl: '3600'
       })
     
-    if (uploadError) {
-      console.error('Upload error:', uploadError)
-      throw new Error(`Upload failed: ${uploadError.message}`)
-    }
+    if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
 
-    // Get public URL
-    const { data: { publicUrl } } = supabaseAdmin.storage
-      .from('documents')
-      .getPublicUrl(fileName)
+    const { data: { publicUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(fileName)
 
-    console.log('✅ Generated RTR URL:', publicUrl)
-
-    // Update candidate_interests - KEEP EXISTING STATUS, don't change it
+    // CRUCIAL FIX: Update with status - 'rtr_ready'
     const { error: updateError } = await supabaseAdmin
       .from('candidate_interests')
       .update({
         right_to_represent_url: publicUrl,
-        right_to_represent_signed: false,  // Reset signature status
+        right_to_represent_signed: false,
+        status: 'rtr_ready',
         agency_notes: `RTR (re)generated on ${new Date().toISOString()}`
       })
       .eq('id', interestId)
     
-    if (updateError) {
-      console.error('Update error:', updateError)
-      throw new Error(`Update failed: ${updateError.message}`)
-    }
+    if (updateError) throw new Error(`Update failed: ${updateError.message}`)
 
-    // Send notifications with CORRECT LINKS
+    // Send notifications
     await Promise.all([
       candidate?.user_id &&
         supabaseAdmin.from('notifications').insert({
           user_id: candidate.user_id,
           type: 'rtr_ready',
           title: '✍️ RTR ready to sign',
-          message: `Your Right-to-Represent agreement for "${job.title}" is ready (or has been updated) and awaits your signature.`,
-          link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,  // ✅ FIXED - Direct link to sign page
+          message: `Your Right-to-Represent agreement for "${job.title}" is ready and awaits your signature.`,
+          link: `/dashboard/candidate/interests/${interestId}/sign-rtr`,
           ai_priority: 'high',
-          metadata: { 
-            interest_id: interestId, 
-            job_title: job.title, 
-            rtr_url: publicUrl,
-            regenerated: true 
-          }
+          metadata: { interest_id: interestId, job_title: job.title, rtr_url: publicUrl }
         }),
       supabaseAdmin.from('notifications').insert({
         user_id: interest.agency_id,
         type: 'rtr_generated',
-        title: '📄 RTR (re)generated',
-        message: `RTR for ${candidate.name} on "${job.title}" has been (re)generated and sent to the candidate.`,
+        title: '📄 RTR generated',
+        message: `RTR for ${candidate.name} on "${job.title}" has been generated and sent to the candidate.`,
         link: `/dashboard/agency/interests/${interestId}`,
         ai_priority: 'normal',
-        metadata: { interest_id: interestId, candidate_name: candidate.name, regenerated: true }
+        metadata: { interest_id: interestId, candidate_name: candidate.name }
       })
     ])
 
@@ -219,7 +200,6 @@ export async function POST(request: Request) {
       message: 'RTR generated successfully and sent to candidate'
     })
   } catch (err: any) {
-    console.error('RTR generation error:', err)
     return NextResponse.json({ 
       error: err?.message || 'RTR generation failed' 
     }, { status: 500 })
