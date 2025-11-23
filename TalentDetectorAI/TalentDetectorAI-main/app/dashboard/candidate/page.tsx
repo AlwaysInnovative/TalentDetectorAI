@@ -1,9 +1,18 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { 
-  Bell, Briefcase, FileText, TrendingUp, Clock, Eye, 
-  CheckCircle, ArrowRight, Sparkles, Award, Mail
+import {
+  Bell,
+  Briefcase,
+  FileText,
+  TrendingUp,
+  Clock,
+  Eye,
+  CheckCircle,
+  ArrowRight,
+  Sparkles,
+  Award,
+  Mail
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
@@ -12,9 +21,9 @@ import DynamicBackground from '@/components/ui/DynamicBackground'
 
 export default function CandidateDashboard() {
   const [stats, setStats] = useState({
-    total_interests: 0,
+    totalInterests: 0,
     unread: 0,
-    cv_uploaded: 0,
+    cvUploaded: 0,
     responded: 0
   })
   const [notifications, setNotifications] = useState<any[]>([])
@@ -29,6 +38,8 @@ export default function CandidateDashboard() {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
+    if (!user) return
+
     // Get candidate record
     const { data: candidateData } = await supabase
       .from('candidates')
@@ -38,26 +49,40 @@ export default function CandidateDashboard() {
 
     if (!candidateData) return
 
-    // Get interests
+    // Get interests WITHOUT the problematic join
     const { data: interestsData } = await supabase
       .from('candidate_interests')
-      .select(`
-        *,
-        jobs(title, location, company),
-        profiles!candidate_interests_agency_id_fkey(full_name, company)
-      `)
+      .select('*')
       .eq('candidate_id', candidateData.id)
       .order('created_at', { ascending: false })
 
-    setInterests(interestsData || [])
+    if (interestsData) {
+      // Enrich with jobs and agency data separately
+      const enriched = await Promise.all(
+        interestsData.map(async (interest) => {
+          const [jobRes, agencyRes] = await Promise.all([
+            supabase.from('jobs').select('*').eq('id', interest.job_id).single(),
+            supabase.from('profiles').select('*').eq('id', interest.agency_id).single()
+          ])
 
-    // Calculate stats
-    setStats({
-      total_interests: interestsData?.length || 0,
-      unread: interestsData?.filter((i: any) => !i.viewed_by_candidate).length || 0,
-      cv_uploaded: interestsData?.filter((i: any) => i.cv_url).length || 0,
-      responded: interestsData?.filter((i: any) => i.candidate_responded_at).length || 0
-    })
+          return {
+            ...interest,
+            jobs: jobRes.data,
+            profiles: agencyRes.data
+          }
+        })
+      )
+
+      setInterests(enriched)
+
+      // Calculate stats
+      setStats({
+        totalInterests: enriched?.length || 0,
+        unread: enriched?.filter((i: any) => !i.viewed_by_candidate).length || 0,
+        cvUploaded: enriched?.filter((i: any) => i.cv_url).length || 0,
+        responded: enriched?.filter((i: any) => i.candidate_responded_at).length || 0
+      })
+    }
 
     // Get notifications
     const { data: notifData } = await supabase
@@ -87,7 +112,7 @@ export default function CandidateDashboard() {
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3">
-            Welcome Back! 👋
+            Welcome Back!
           </h1>
           <p className="text-xl text-gray-600">Here's your opportunity dashboard</p>
         </div>
@@ -98,7 +123,8 @@ export default function CandidateDashboard() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="mb-8 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white rounded-2xl p-6 shadow-2xl cursor-pointer hover:shadow-3xl transition"
-            onClick={() => router.push('/dashboard/candidate/interests')}>
+            onClick={() => router.push('/dashboard/candidate/interests')}
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-xl flex items-center justify-center">
@@ -124,7 +150,7 @@ export default function CandidateDashboard() {
             <div className="bg-white rounded-2xl p-6 shadow-lg border-2 border-gray-200 hover:border-blue-400 hover:shadow-xl transition cursor-pointer">
               <div className="flex items-center justify-between mb-3">
                 <Briefcase className="w-8 h-8 text-blue-600" />
-                <span className="text-4xl font-bold text-gray-900">{stats.total_interests}</span>
+                <span className="text-4xl font-bold text-gray-900">{stats.totalInterests}</span>
               </div>
               <p className="text-gray-600 font-bold">Total Opportunities</p>
             </div>
@@ -143,7 +169,7 @@ export default function CandidateDashboard() {
           <div className="bg-white rounded-2xl p-6 shadow-lg border-2 border-purple-200">
             <div className="flex items-center justify-between mb-3">
               <FileText className="w-8 h-8 text-purple-600" />
-              <span className="text-4xl font-bold text-purple-600">{stats.cv_uploaded}</span>
+              <span className="text-4xl font-bold text-purple-600">{stats.cvUploaded}</span>
             </div>
             <p className="text-gray-600 font-bold">CVs Uploaded</p>
           </div>
@@ -173,7 +199,8 @@ export default function CandidateDashboard() {
                   onClick={() => {
                     markNotificationRead(notif.id)
                     if (notif.link) router.push(notif.link)
-                  }}>
+                  }}
+                >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <h3 className="font-bold text-gray-900 mb-1">{notif.title}</h3>
@@ -196,7 +223,7 @@ export default function CandidateDashboard() {
             <h2 className="text-2xl font-bold text-gray-900">Recent Opportunities</h2>
             <Link href="/dashboard/candidate/interests">
               <button className="px-4 py-2 text-blue-600 font-bold hover:bg-blue-50 rounded-lg transition">
-                View All →
+                View All
               </button>
             </Link>
           </div>
@@ -206,11 +233,14 @@ export default function CandidateDashboard() {
               <Link key={interest.id} href={`/dashboard/candidate/interests/${interest.id}`}>
                 <motion.div
                   whileHover={{ scale: 1.01 }}
-                  className="p-4 bg-gradient-to-r from-gray-50 to-blue-50 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:shadow-lg transition cursor-pointer">
+                  className="p-4 bg-gradient-to-r from-gray-50 to-blue-50 border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:shadow-lg transition cursor-pointer"
+                >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-xl font-bold text-gray-900">{interest.jobs.title}</h3>
+                        <h3 className="text-xl font-bold text-gray-900">
+                          {interest.jobs?.title || 'Loading...'}
+                        </h3>
                         {!interest.viewed_by_candidate && (
                           <span className="px-3 py-1 bg-red-500 text-white rounded-full text-xs font-bold animate-pulse">
                             NEW
@@ -223,9 +253,9 @@ export default function CandidateDashboard() {
                           </span>
                         )}
                       </div>
-                      <p className="text-gray-600 mb-2">{interest.jobs.location}</p>
+                      <p className="text-gray-600 mb-2">{interest.jobs?.location || 'Location pending'}</p>
                       <div className="flex items-center gap-2 text-sm text-gray-500">
-                        <span>From {interest.profiles.full_name}</span>
+                        <span>From: {interest.profiles?.full_name || 'Agency'}</span>
                         <span>•</span>
                         <span>{new Date(interest.created_at).toLocaleDateString()}</span>
                       </div>
