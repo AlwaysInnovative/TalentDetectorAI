@@ -143,7 +143,8 @@ export default function SignRTRPage({ params }: { params: { id: string } }) {
         .from('candidate_interests')
         .update({
           right_to_represent_signed: true,
-          right_to_represent_signed_at: timestamp
+          right_to_represent_signed_at: timestamp,
+          rtr_status: 'signed'
         })
         .eq('id', params.id)
 
