@@ -56,7 +56,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         return
       }
 
-      // Fetch interest without joins
       const { data: interestData, error: interestErr } = await supabase
         .from('candidate_interests')
         .select('*')
@@ -69,7 +68,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         return
       }
 
-      // Fetch related data separately
       const [jobRes, agencyRes, candidateRes] = await Promise.all([
         supabase.from('jobs').select('*').eq('id', interestData.job_id).single(),
         supabase.from('profiles').select('*').eq('id', interestData.agency_id).single(),
@@ -91,7 +89,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     }
   }
 
-  // Real-time subscription for live updates
   useEffect(() => {
     if (!interest?.id) return
 
@@ -107,8 +104,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           table: 'candidate_interests',
           filter: `id=eq.${interest.id}`
         },
-        (payload) => {
-          console.log('🔄 Interest updated in real-time:', payload)
+        () => {
           loadInterest()
           toast.success('Status updated!')
         }
@@ -217,7 +213,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     if (interest.status === 'not_interested') {
       return { text: 'You have declined this opportunity.', color: 'red' }
     }
-    if (interest.status === 'rtr_ready') {
+    if (interest.rtr_status === 'ready') {
       return {
         text: 'Your Right to Represent agreement is ready for signature.',
         color: 'purple'
@@ -322,39 +318,19 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           <div className="mb-6 p-6 bg-blue-50 rounded-xl border border-blue-200">
             <h2 className="text-xl font-bold text-gray-900 mb-3">Agency Information</h2>
             <div className="space-y-2 text-gray-700">
-              <p>
-                <strong>Agency:</strong> {agency?.full_name || 'Agency'}
-              </p>
-              {agency?.company && (
-                <p>
-                  <strong>Company:</strong> {agency.company}
-                </p>
-              )}
-              <p>
-                <strong>Contact:</strong> {agency?.email || 'N/A'}
-              </p>
+              <p><strong>Agency:</strong> {agency?.full_name || 'Agency'}</p>
+              {agency?.company && <p><strong>Company:</strong> {agency.company}</p>}
+              <p><strong>Contact:</strong> {agency?.email || 'N/A'}</p>
             </div>
           </div>
 
           <div className="mb-6 p-6 bg-purple-50 rounded-xl border border-purple-200">
             <h2 className="text-xl font-bold text-gray-900 mb-3">Your Details</h2>
             <div className="space-y-2 text-gray-700">
-              <p>
-                <strong>Name:</strong> {candidate?.name || 'N/A'}
-              </p>
-              <p>
-                <strong>Email:</strong> {candidate?.email || 'N/A'}
-              </p>
-              {candidate?.phone && (
-                <p>
-                  <strong>Phone:</strong> {candidate.phone}
-                </p>
-              )}
-              {candidate?.location && (
-                <p>
-                  <strong>Location:</strong> {candidate.location}
-                </p>
-              )}
+              <p><strong>Name:</strong> {candidate?.name || 'N/A'}</p>
+              <p><strong>Email:</strong> {candidate?.email || 'N/A'}</p>
+              {candidate?.phone && <p><strong>Phone:</strong> {candidate.phone}</p>}
+              {candidate?.location && <p><strong>Location:</strong> {candidate.location}</p>}
             </div>
           </div>
 
@@ -415,59 +391,58 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {/* RTR STATUS SECTION - CRUCIAL FIX */}
-          {interest.right_to_represent_url && (
+          {interest.right_to_represent_url && interest.rtr_status === 'ready' && !interest.right_to_represent_signed && (
             <div className="mb-8">
-              {!interest.right_to_represent_signed ? (
-                <div className="p-6 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl shadow-2xl">
-                  <div className="flex items-center justify-between flex-wrap gap-4">
-                    <div className="flex items-center gap-4 flex-1">
-                      <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center flex-shrink-0">
-                        <FileText className="w-8 h-8 animate-pulse" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="text-2xl font-bold mb-2">
-                          ✍️ RTR Agreement Ready to Sign
-                        </h3>
-                        <p className="text-amber-100 text-lg">
-                          Your Right-to-Represent agreement has been generated and is waiting for your signature
-                        </p>
-                      </div>
+              <div className="p-6 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl shadow-2xl">
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center flex-shrink-0">
+                      <FileText className="w-8 h-8 animate-pulse" />
                     </div>
-                    <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
-                      <button className="px-8 py-4 bg-white text-orange-600 rounded-xl font-bold text-lg hover:shadow-2xl transition flex items-center gap-2 whitespace-nowrap">
-                        <FileText className="w-6 h-6" />
-                        Sign RTR Now
-                      </button>
-                    </Link>
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold mb-2">
+                        ✍️ RTR Agreement Ready to Sign
+                      </h3>
+                      <p className="text-amber-100 text-lg">
+                        Your Right-to-Represent agreement has been generated and is waiting for your signature
+                      </p>
+                    </div>
+                  </div>
+                  <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
+                    <button className="px-8 py-4 bg-white text-orange-600 rounded-xl font-bold text-lg hover:shadow-2xl transition flex items-center gap-2 whitespace-nowrap">
+                      <FileText className="w-6 h-6" />
+                      Sign RTR Now
+                    </button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {interest.right_to_represent_signed && (
+            <div className="mb-8 p-6 bg-green-50 rounded-2xl border-2 border-green-300">
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div className="flex items-center gap-4 flex-1">
+                  <CheckCircle className="w-12 h-12 text-green-600 flex-shrink-0" />
+                  <div>
+                    <h3 className="text-xl font-bold text-gray-900">RTR Agreement Signed ✅</h3>
+                    <p className="text-sm text-gray-600">
+                      Signed on {new Date(interest.right_to_represent_signed_at).toLocaleString()}
+                    </p>
                   </div>
                 </div>
-              ) : (
-                <div className="p-6 bg-green-50 rounded-2xl border-2 border-green-300">
-                  <div className="flex items-center justify-between flex-wrap gap-4">
-                    <div className="flex items-center gap-4 flex-1">
-                      <CheckCircle className="w-12 h-12 text-green-600 flex-shrink-0" />
-                      <div>
-                        <h3 className="text-xl font-bold text-gray-900">RTR Agreement Signed ✅</h3>
-                        <p className="text-sm text-gray-600">
-                          Signed on {new Date(interest.right_to_represent_signed_at).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    {interest.right_to_represent_pdf_url && (
-                      <a
-                        href={interest.right_to_represent_pdf_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition flex items-center gap-2"
-                      >
-                        <Download className="w-5 h-5" />
-                        Download Signed RTR
-                      </a>
-                    )}
-                  </div>
-                </div>
-              )}
+                {interest.right_to_represent_pdf_url && (
+                  <a
+                    href={interest.right_to_represent_pdf_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition flex items-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Signed RTR
+                  </a>
+                )}
+              </div>
             </div>
           )}
 
