@@ -38,7 +38,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
       setLoading(true)
       setError('')
       const supabase = createClient()
-
+      
       const { data: { user }, error: userError } = await supabase.auth.getUser()
       if (userError || !user) {
         setError('Not logged in')
@@ -56,24 +56,34 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         return
       }
 
-      const { data, error: interestErr } = await supabase
+      // Fetch interest without joins
+      const { data: interestData, error: interestErr } = await supabase
         .from('candidate_interests')
-        .select(`
-          *,
-          jobs(id, title, description, location, salary_min, salary_max, department, employment_type),
-          candidates(id, name, email, phone, location),
-          profiles!candidate_interests_agency_id_fkey(full_name, company, email)
-        `)
+        .select('*')
         .eq('id', params.id)
         .eq('candidate_id', candidate.id)
         .single()
 
-      if (interestErr || !data) {
+      if (interestErr || !interestData) {
         setError('Opportunity not found or not assigned to you')
         return
       }
 
-      setInterest(data)
+      // Fetch related data separately
+      const [jobRes, agencyRes, candidateRes] = await Promise.all([
+        supabase.from('jobs').select('*').eq('id', interestData.job_id).single(),
+        supabase.from('profiles').select('*').eq('id', interestData.agency_id).single(),
+        supabase.from('candidates').select('*').eq('id', interestData.candidate_id).single()
+      ])
+
+      const completeInterest = {
+        ...interestData,
+        jobs: jobRes.data,
+        profiles: agencyRes.data,
+        candidates: candidateRes.data
+      }
+
+      setInterest(completeInterest)
     } catch (err: any) {
       setError(err?.message || 'Failed to load opportunity')
     } finally {
@@ -90,8 +100,8 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     setUploadingCv(true)
     try {
       const supabase = createClient()
-      const filePath = `cv_${Date.now()}_${cvFile.name}`
-
+      const filePath = `cv/${Date.now()}_${cvFile.name}`
+      
       const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(filePath, cvFile)
@@ -119,7 +129,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
       await loadInterest()
       await mutate('candidate-interests')
     } catch (err: any) {
-      toast.error('Failed to upload CV: ' + (err?.message || 'Unknown error'))
+      toast.error(`Failed to upload CV: ${err?.message || 'Unknown error'}`)
     } finally {
       setUploadingCv(false)
     }
@@ -134,14 +144,13 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          interest_id: interest.id,
+          interestId: interest.id,
           accepted,
           comment: responseComment
         })
       })
 
       const data = await res.json()
-
       if (!res.ok) {
         toast.error(data.error || 'Failed to submit response')
         return
@@ -152,14 +161,10 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           ? 'You accepted this opportunity! The agency will contact you soon.'
           : 'You declined this opportunity.'
       )
-
       setResponseComment('')
       await loadInterest()
       await mutate('candidate-interests')
-
-      setTimeout(() => {
-        router.push('/dashboard/candidate/interests')
-      }, 1500)
+      setTimeout(() => router.push('/dashboard/candidate/interests'), 1500)
     } catch (err: any) {
       toast.error('Could not submit response')
     } finally {
@@ -169,16 +174,25 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
   function getStatusMessage(interest: any) {
     if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-      return { text: 'Please review the job details below and respond with your decision.', color: 'yellow' }
+      return {
+        text: 'Please review the job details below and respond with your decision.',
+        color: 'yellow'
+      }
     }
     if (interest.status === 'interested') {
-      return { text: 'Thank you for your interest! The agency will follow up with the next steps.', color: 'green' }
+      return {
+        text: 'Thank you for your interest! The agency will follow up with the next steps.',
+        color: 'green'
+      }
     }
     if (interest.status === 'not_interested') {
       return { text: 'You have declined this opportunity.', color: 'red' }
     }
     if (interest.status === 'rtr_ready') {
-      return { text: 'Your Right to Represent agreement is ready for signature.', color: 'purple' }
+      return {
+        text: 'Your Right to Represent agreement is ready for signature.',
+        color: 'purple'
+      }
     }
     return null
   }
@@ -207,7 +221,8 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </button>
             <Link href="/dashboard/candidate/interests">
               <button className="px-5 py-2 bg-gray-200 text-gray-800 rounded font-bold hover:bg-gray-300 flex items-center gap-2">
-                <ArrowLeft className="w-5 h-5" /> Back
+                <ArrowLeft className="w-5 h-5" />
+                Back
               </button>
             </Link>
           </div>
@@ -237,15 +252,17 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
         <div className="bg-white rounded-2xl p-8 shadow-xl">
           <div className="mb-6">
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">{job.title}</h1>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">{job?.title || 'Title'}</h1>
             <div className="flex flex-wrap gap-4 text-lg text-gray-600 mb-3">
-              <span>📍 {job.location}</span>
-              {job.department && <span>• {job.department}</span>}
-              {job.employment_type && <span>• {job.employment_type}</span>}
+              <span>{job?.location || 'Location'}</span>
+              {job?.department && <span>• {job.department}</span>}
+              {job?.employment_type && <span>• {job.employment_type}</span>}
             </div>
-            <p className="text-2xl font-bold text-green-600">
-              £{job.salary_min?.toLocaleString()} - £{job.salary_max?.toLocaleString()}
-            </p>
+            {job?.salary_min && job?.salary_max && (
+              <p className="text-2xl font-bold text-green-600">
+                £{job.salary_min?.toLocaleString()} - £{job.salary_max?.toLocaleString()}
+              </p>
+            )}
           </div>
 
           {statusInfo && (
@@ -264,10 +281,12 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {job.description && (
+          {job?.description && (
             <div className="mb-6 p-6 bg-gray-50 rounded-xl border border-gray-200">
               <h2 className="text-xl font-bold text-gray-900 mb-3">Job Description</h2>
-              <div className="whitespace-pre-wrap text-gray-700 leading-relaxed">{job.description}</div>
+              <div className="whitespace-pre-wrap text-gray-700 leading-relaxed">
+                {job.description}
+              </div>
             </div>
           )}
 
@@ -275,15 +294,15 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             <h2 className="text-xl font-bold text-gray-900 mb-3">Agency Information</h2>
             <div className="space-y-2 text-gray-700">
               <p>
-                <strong>Agency:</strong> {agency.full_name}
+                <strong>Agency:</strong> {agency?.full_name || 'Agency'}
               </p>
-              {agency.company && (
+              {agency?.company && (
                 <p>
                   <strong>Company:</strong> {agency.company}
                 </p>
               )}
               <p>
-                <strong>Contact:</strong> {agency.email}
+                <strong>Contact:</strong> {agency?.email || 'N/A'}
               </p>
             </div>
           </div>
@@ -292,17 +311,17 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             <h2 className="text-xl font-bold text-gray-900 mb-3">Your Details</h2>
             <div className="space-y-2 text-gray-700">
               <p>
-                <strong>Name:</strong> {candidate.name}
+                <strong>Name:</strong> {candidate?.name || 'N/A'}
               </p>
               <p>
-                <strong>Email:</strong> {candidate.email}
+                <strong>Email:</strong> {candidate?.email || 'N/A'}
               </p>
-              {candidate.phone && (
+              {candidate?.phone && (
                 <p>
                   <strong>Phone:</strong> {candidate.phone}
                 </p>
               )}
-              {candidate.location && (
+              {candidate?.location && (
                 <p>
                   <strong>Location:</strong> {candidate.location}
                 </p>
@@ -367,56 +386,49 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {interest.status === 'sent' &&
-            interest.candidate_acceptance_status === 'pending_response' && (
-              <div className="mb-8">
-                <h2 className="text-xl font-bold text-gray-900 mb-4">
-                  Your Response
-                </h2>
-                <textarea
-                  rows={3}
-                  value={responseComment}
-                  onChange={(e) => setResponseComment(e.target.value)}
-                  className="w-full border-2 border-gray-300 rounded-lg p-4 mb-4 focus:border-blue-500 focus:outline-none"
-                  placeholder="Add any comments or questions (optional)..."
-                />
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={() => handleRespond(false)}
-                    disabled={responding}
-                    className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
-                  >
-                    {responding ? (
-                      <Loader2 className="w-6 h-6 animate-spin" />
-                    ) : (
-                      <ThumbsDown className="w-6 h-6" />
-                    )}
-                    Decline
-                  </button>
-                  <button
-                    onClick={() => handleRespond(true)}
-                    disabled={responding}
-                    className="px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
-                  >
-                    {responding ? (
-                      <Loader2 className="w-6 h-6 animate-spin" />
-                    ) : (
-                      <ThumbsUp className="w-6 h-6" />
-                    )}
-                    Accept
-                  </button>
-                </div>
+          {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
+            <div className="mb-8">
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
+              <textarea
+                rows={3}
+                value={responseComment}
+                onChange={(e) => setResponseComment(e.target.value)}
+                className="w-full border-2 border-gray-300 rounded-lg p-4 mb-4 focus:border-blue-500 focus:outline-none"
+                placeholder="Add any comments or questions (optional)..."
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => handleRespond(false)}
+                  disabled={responding}
+                  className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
+                >
+                  {responding ? (
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  ) : (
+                    <ThumbsDown className="w-6 h-6" />
+                  )}
+                  Decline
+                </button>
+                <button
+                  onClick={() => handleRespond(true)}
+                  disabled={responding}
+                  className="px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 flex items-center justify-center gap-2 transition"
+                >
+                  {responding ? (
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  ) : (
+                    <ThumbsUp className="w-6 h-6" />
+                  )}
+                  Accept
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
           {interest.right_to_represent_url && interest.status === 'rtr_ready' && (
             <div className="p-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-2xl text-center shadow-2xl">
-              <h2 className="text-2xl font-bold mb-4">
-                Right to Represent Agreement Ready
-              </h2>
-              <p className="mb-6">
-                Your RTR document is ready for review and signature
-              </p>
+              <h2 className="text-2xl font-bold mb-4">Right to Represent Agreement Ready</h2>
+              <p className="mb-6">Your RTR document is ready for review and signature</p>
               <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
                 <button className="inline-flex items-center gap-2 px-8 py-4 bg-white text-purple-600 rounded-xl font-bold text-lg hover:shadow-xl transition">
                   <FileText className="w-6 h-6" />
