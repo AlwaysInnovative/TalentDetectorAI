@@ -75,7 +75,7 @@ export default function ManagerDashboard() {
         </div>
         <div className="flex gap-3 items-center">
           <RealtimeNotifications />
-          <Link href="/dashboard/manager/jobs/create">
+          <Link href="/dashboard/manager/jobs/new">
             <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg flex items-center gap-2 transition">
               <Plus className="w-5 h-5" /> Post New Job
             </button>
