@@ -18,24 +18,38 @@ export async function POST(request: Request) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // Fetch interest, job, candidate
+    // Fetch interest
     const { data: interest } = await supabaseAdmin
       .from('candidate_interests')
       .select('*')
       .eq('id', interestId)
       .single()
 
+    if (!interest) {
+      throw new Error('Interest not found')
+    }
+
+    // Fetch job
     const { data: job } = await supabaseAdmin
       .from('jobs')
       .select('*')
       .eq('id', interest.job_id)
       .single()
 
+    if (!job) {
+      throw new Error('Job not found')
+    }
+
+    // Fetch candidate
     const { data: candidate } = await supabaseAdmin
       .from('candidates')
       .select('*')
       .eq('id', interest.candidate_id)
       .single()
+
+    if (!candidate) {
+      throw new Error('Candidate not found')
+    }
 
     // Fetch AI summary
     const { data: analytics } = await supabaseAdmin
@@ -48,14 +62,76 @@ export async function POST(request: Request) {
       throw new Error('AI summary not found')
     }
 
-    // Update with edited values
+    // Find hiring manager - try multiple approaches
+    let hiringManager = null
+
+    // Approach 1: If job has created_by field
+    if (job.created_by) {
+      const { data } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email, full_name')
+        .eq('id', job.created_by)
+        .single()
+
+      if (data) {
+        hiringManager = data
+      }
+    }
+
+    // Approach 2: If job has hiring_manager_id field
+    if (!hiringManager && job.hiring_manager_id) {
+      const { data } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email, full_name')
+        .eq('id', job.hiring_manager_id)
+        .single()
+
+      if (data) {
+        hiringManager = data
+      }
+    }
+
+    // Approach 3: Look in job_assignments table
+    if (!hiringManager) {
+      const { data: assignments } = await supabaseAdmin
+        .from('job_assignments')
+        .select('user_id')
+        .eq('job_id', job.id)
+        .eq('role', 'hiring_manager')
+        .limit(1)
+        .single()
+
+      if (assignments?.user_id) {
+        const { data } = await supabaseAdmin
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('id', assignments.user_id)
+          .single()
+
+        if (data) {
+          hiringManager = data
+        }
+      }
+    }
+
+    // Approach 4: If still not found, use the user who created the job from auth logs
+    if (!hiringManager) {
+      // Fallback: Return error with helpful message
+      throw new Error(
+        'Hiring manager not found. Please ensure the job has a hiring_manager_id or created_by field populated.'
+      )
+    }
+
+    // Update summary with edited values
     const updatedSummary = {
       ...analytics.summary,
       commission: {
         ...analytics.summary.commission,
         percentage: editedCommissionPercentage || analytics.summary.commission.percentage,
         estimatedFee: Math.round(
-          ((editedSalaryMax || analytics.summary.salary.proposedMax) * (editedCommissionPercentage || analytics.summary.commission.percentage)) / 100
+          ((editedSalaryMax || analytics.summary.salary.proposedMax) *
+            (editedCommissionPercentage || analytics.summary.commission.percentage)) /
+            100
         )
       },
       salary: {
@@ -63,17 +139,6 @@ export async function POST(request: Request) {
         proposedMin: editedSalaryMin || analytics.summary.salary.proposedMin,
         proposedMax: editedSalaryMax || analytics.summary.salary.proposedMax
       }
-    }
-
-    // Get hiring manager (job owner/creator)
-    const { data: hiringManager } = await supabaseAdmin
-      .from('profiles')
-      .select('id, email, full_name')
-      .eq('id', job.created_by)
-      .single()
-
-    if (!hiringManager) {
-      throw new Error('Hiring manager not found')
     }
 
     // Create summary card record for hiring manager
@@ -92,7 +157,9 @@ export async function POST(request: Request) {
       .select()
       .single()
 
-    if (cardError) throw new Error(`Failed to create summary card: ${cardError.message}`)
+    if (cardError) {
+      throw new Error(`Failed to create summary card: ${cardError.message}`)
+    }
 
     // Send notification to hiring manager
     await supabaseAdmin.from('notifications').insert({
@@ -100,7 +167,7 @@ export async function POST(request: Request) {
       type: 'candidate_summary_received',
       title: `📋 New Candidate Summary: ${candidate.name}`,
       message: `Agency has submitted an AI-powered candidate summary for ${candidate.name} for the ${job.title} role. AI match score: ${updatedSummary.aiMatchScore}%`,
-      link: `/dashboard/hiring-manager/candidate-summaries/${summaryCard.id}`,
+      link: `/dashboard/manager/candidate-summaries/${summaryCard.id}`,
       action_type: 'view_summary',
       ai_priority: 'high',
       metadata: {
@@ -108,7 +175,7 @@ export async function POST(request: Request) {
         candidate_name: candidate.name,
         job_title: job.title,
         ai_match_score: updatedSummary.aiMatchScore,
-        commission_percentage: editedCommissionPercentage || analytics.summary.commission.percentage 
+        commission_percentage: editedCommissionPercentage || analytics.summary.commission.percentage
       }
     })
 
@@ -125,7 +192,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       message: 'Summary sent to hiring manager',
-      summaryCard
+      summaryCard,
+      hiringManager: hiringManager.full_name
     })
   } catch (err: any) {
     console.error('Send summary error:', err)
