@@ -108,7 +108,7 @@ export async function POST(request: Request) {
         candidate_name: candidate.name,
         job_title: job.title,
         ai_match_score: updatedSummary.aiMatchScore,
-        commission_percentage: editedCommissionPercentage || analytics.summary.commission.percentage
+        commission_percentage: editedCommissionPercentage || analytics.summary.commission.percentage 
       }
     })
 
