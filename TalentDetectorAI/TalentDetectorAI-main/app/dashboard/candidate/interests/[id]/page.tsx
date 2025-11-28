@@ -276,6 +276,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         </div>
 
         <div className="bg-white rounded-2xl p-8 shadow-xl">
+          {/* Job Header */}
           <div className="mb-6">
             <h1 className="text-4xl font-bold text-gray-900 mb-2">{job?.title || 'Title'}</h1>
             <div className="flex flex-wrap gap-4 text-lg text-gray-600 mb-3">
@@ -290,6 +291,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             )}
           </div>
 
+          {/* Status Badge */}
           {statusInfo && (
             <div
               className={`mb-6 p-4 rounded-lg border-2 ${
@@ -306,6 +308,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* Job Description */}
           {job?.description && (
             <div className="mb-6 p-6 bg-gray-50 rounded-xl border border-gray-200">
               <h2 className="text-xl font-bold text-gray-900 mb-3">Job Description</h2>
@@ -315,6 +318,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* Agency Information */}
           <div className="mb-6 p-6 bg-blue-50 rounded-xl border border-blue-200">
             <h2 className="text-xl font-bold text-gray-900 mb-3">Agency Information</h2>
             <div className="space-y-2 text-gray-700">
@@ -324,6 +328,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           </div>
 
+          {/* Your Details */}
           <div className="mb-6 p-6 bg-purple-50 rounded-xl border border-purple-200">
             <h2 className="text-xl font-bold text-gray-900 mb-3">Your Details</h2>
             <div className="space-y-2 text-gray-700">
@@ -334,6 +339,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           </div>
 
+          {/* CV Upload Section */}
           {!interest.cv_url && (
             <div className="mb-8 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border-2 border-purple-300">
               <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
@@ -368,6 +374,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* CV Uploaded Confirmation */}
           {interest.cv_url && (
             <div className="mb-8 p-6 bg-green-50 rounded-xl border-2 border-green-300">
               <div className="flex items-center justify-between">
@@ -391,6 +398,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* RTR Ready to Sign */}
           {interest.right_to_represent_url && interest.rtr_status === 'ready' && !interest.right_to_represent_signed && (
             <div className="mb-8">
               <div className="p-6 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl shadow-2xl">
@@ -419,6 +427,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* RTR Signed Confirmation */}
           {interest.right_to_represent_signed && (
             <div className="mb-8 p-6 bg-green-50 rounded-2xl border-2 border-green-300">
               <div className="flex items-center justify-between flex-wrap gap-4">
@@ -446,6 +455,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
+          {/* Accept/Decline Response */}
           {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
             <div className="mb-8">
               <h2 className="text-xl font-bold text-gray-900 mb-4">Your Response</h2>
