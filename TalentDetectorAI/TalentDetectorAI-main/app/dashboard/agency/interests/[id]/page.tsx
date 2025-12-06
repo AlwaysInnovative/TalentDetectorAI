@@ -14,7 +14,6 @@ import {
   MapPin,
   Award,
   Zap,
-  Clock,
   Send,
   DollarSign,
   TrendingUp
@@ -53,7 +52,12 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
 
       const { data: interestData, error: interestError } = await supabase
         .from('candidate_interests')
-        .select('*')
+        .select(`
+          *,
+          candidates(id, name, email, phone, location),
+          jobs(id, title, location, department, employment_type, salary_min, salary_max, description),
+          profiles!candidate_interests_agency_id_fkey(id, full_name, company, email, phone)
+        `)
         .eq('id', params.id)
         .eq('agency_id', user.id)
         .single()
@@ -63,29 +67,9 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         return
       }
 
-      const [candidateRes, jobRes, agencyRes] = await Promise.all([
-        supabase.from('candidates').select('*').eq('id', interestData.candidate_id).single(),
-        supabase.from('jobs').select('*').eq('id', interestData.job_id).single(),
-        supabase.from('profiles').select('*').eq('id', interestData.agency_id).single()
-      ])
-
-      const completeInterest = {
-        ...interestData,
-        candidates: candidateRes.data,
-        jobs: jobRes.data,
-        profiles: agencyRes.error ? {
-          id: interestData.agency_id,
-          full_name: 'Agency User',
-          company: null,
-          email: user.email || '',
-          phone: null
-        } : agencyRes.data
-      }
-
-      setInterest(completeInterest)
+      setInterest(interestData)
       await loadCandidateSummary(params.id)
 
-      // Check if summary already sent
       const { data: analytics } = await supabase
         .from('interest_analytics')
         .select('sent_to_hiring_manager_at')
@@ -134,9 +118,10 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to generate RTR')
 
-      toast.success('RTR generated and sent to candidate')
+      toast.success('✅ RTR generated and sent to candidate!')
       await loadInterest()
     } catch (err: any) {
+      console.error('RTR Error:', err)
       toast.error(err?.message || 'RTR generation failed')
     } finally {
       setGeneratingRTR(false)
@@ -155,9 +140,10 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
 
-      toast.success('AI summary generated successfully')
+      toast.success('✅ AI summary generated successfully!')
       await loadCandidateSummary(interest.id)
     } catch (err: any) {
+      console.error('Summary Error:', err)
       toast.error(err?.message || 'AI summary generation failed')
     } finally {
       setGeneratingSummary(false)
@@ -179,12 +165,13 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
         })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error || 'Failed to send summary')
 
-      toast.success('Summary sent to hiring manager with notifications!')
+      toast.success('✅ Summary sent to hiring manager with notifications!')
       setSummaryCardSent(true)
       await loadInterest()
     } catch (err: any) {
+      console.error('Send to HM Error:', err)
       toast.error(err?.message || 'Failed to send summary')
     } finally {
       setSendingToHM(false)
@@ -207,10 +194,7 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
           <h1 className="font-bold text-2xl text-red-700 mb-4">Error</h1>
           <p className="mb-6 text-gray-700">{error}</p>
           <div className="flex gap-3 justify-center">
-            <button
-              onClick={loadInterest}
-              className="px-5 py-2 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700"
-            >
+            <button onClick={loadInterest} className="px-5 py-2 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-700">
               Try Again
             </button>
             <Link href="/dashboard/agency/interested-candidates">
@@ -258,6 +242,56 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
           )}
         </section>
 
+        {/* ✅ CV UPLOADED SECTION - PROMINENT */}
+        {interest.cv_url && !interest.right_to_represent_signed && (
+          <section className="mb-8 p-10 bg-gradient-to-r from-purple-100 via-indigo-100 to-purple-200 rounded-3xl shadow-2xl border-4 border-purple-300">
+            <div className="flex flex-col lg:flex-row items-start lg:items-center gap-8 mb-8">
+              <div className="flex items-center gap-6 flex-1">
+                <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-indigo-500 rounded-3xl flex items-center justify-center shadow-2xl">
+                  <FileText className="w-12 h-12 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-4xl font-black text-purple-900 mb-2">✅ CV UPLOADED</h3>
+                  <p className="text-2xl font-bold text-purple-800">{interest.cv_filename || 'Candidate CV'}</p>
+                  <p className="text-xl text-purple-700 mt-2">Ready for RTR generation & review</p>
+                </div>
+              </div>
+              <a
+                href={interest.cv_url}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex items-center gap-3 px-12 py-7 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-3xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 whitespace-nowrap border-4 border-purple-400/50"
+              >
+                <Download className="w-8 h-8 group-hover:scale-110 transition-transform" />
+                <span>Review CV</span>
+              </a>
+            </div>
+
+            {/* RTR GENERATION BUTTON */}
+            {canGenerateRTR && (
+              <div className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-2 rounded-3xl shadow-2xl border-4 border-emerald-400/50">
+                <button
+                  onClick={handleGenerateRTR}
+                  disabled={generatingRTR}
+                  className="w-full px-16 py-8 bg-white/95 hover:bg-white text-emerald-700 rounded-3xl font-black text-2xl shadow-3xl hover:shadow-4xl hover:scale-[1.02] transition-all duration-300 flex items-center justify-center gap-4 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-xl border-4 border-white/50"
+                >
+                  {generatingRTR ? (
+                    <>
+                      <Loader2 className="w-10 h-10 animate-spin" />
+                      Generating RTR Agreement...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-12 h-12 animate-pulse" />
+                      🚀 SEND RTR FOR SIGNING
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Candidate & Agency Cards */}
         <div className="grid md:grid-cols-2 gap-6 mb-6">
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
@@ -301,7 +335,7 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
             <div className="flex items-center gap-3">
               <CheckCircle className="h-10 w-10 text-green-600" />
               <div>
-                <p className="font-semibold text-lg">Signed RTR Document Received</p>
+                <p className="font-semibold text-lg">✅ Signed RTR Document Received</p>
                 <p className="text-sm text-gray-700">
                   Candidate signed on {interest.right_to_represent_signed_at ? new Date(interest.right_to_represent_signed_at).toLocaleString() : 'N/A'}
                 </p>
@@ -323,20 +357,20 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
 
         {/* Generate AI Summary Button & Send to HM */}
         {interest.right_to_represent_signed && (
-          <div className="mb-6 flex gap-3">
+          <div className="mb-6 flex gap-3 flex-wrap">
             <button
               onClick={handleGenerateSummary}
               disabled={generatingSummary}
-              className="px-6 py-3 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 transition disabled:opacity-50 flex items-center gap-2"
+              className="px-8 py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition disabled:opacity-50 flex items-center gap-2 shadow-lg hover:shadow-xl text-lg"
             >
               {generatingSummary ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="w-6 h-6 animate-spin" />
                   Generating AI Summary...
                 </>
               ) : (
                 <>
-                  <Zap className="w-5 h-5" />
+                  <Zap className="w-6 h-6" />
                   Generate / Refresh AI Summary Card
                 </>
               )}
@@ -345,24 +379,24 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
               <button
                 onClick={handleSendToHiringManager}
                 disabled={sendingToHM}
-                className="px-6 py-3 bg-emerald-600 text-white font-bold rounded hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-2"
+                className="px-8 py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition disabled:opacity-50 flex items-center gap-2 shadow-lg hover:shadow-xl text-lg"
               >
                 {sendingToHM ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Loader2 className="w-6 h-6 animate-spin" />
                     Sending...
                   </>
                 ) : (
                   <>
-                    <Send className="w-5 h-5" />
+                    <Send className="w-6 h-6" />
                     Send to Hiring Manager
                   </>
                 )}
               </button>
             )}
             {summaryCardSent && (
-              <div className="px-6 py-3 bg-emerald-100 text-emerald-700 rounded font-semibold flex items-center gap-2">
-                <CheckCircle className="w-5 h-5" />
+              <div className="px-8 py-4 bg-emerald-100 text-emerald-700 rounded-2xl font-bold flex items-center gap-2 text-lg shadow-md">
+                <CheckCircle className="w-6 h-6" />
                 Sent to Hiring Manager
               </div>
             )}
@@ -371,57 +405,57 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
 
         {/* AI Summary Card with Editable Fields */}
         {candidateSummary ? (
-          <div className="mb-6 space-y-4">
+          <div className="mb-6 space-y-6">
             {/* Editable Commission & Salary Card */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-amber-200 bg-amber-50">
-              <h3 className="font-bold text-lg text-gray-900 mb-4 flex items-center gap-2">
-                <DollarSign className="w-5 h-5 text-amber-600" />
+            <div className="bg-white rounded-2xl p-8 shadow-lg border-4 border-amber-200">
+              <h3 className="font-bold text-2xl text-gray-900 mb-6 flex items-center gap-3">
+                <DollarSign className="w-8 h-8 text-amber-600" />
                 Commission & Salary (Editable for Negotiations)
               </h3>
-              <div className="grid md:grid-cols-3 gap-4">
+              <div className="grid md:grid-cols-3 gap-6 mb-6">
                 <div>
-                  <label className="text-sm font-semibold text-gray-700 block mb-2">Commission %</label>
-                  <div className="flex items-center gap-2">
+                  <label className="text-sm font-bold text-gray-700 block mb-3">Commission %</label>
+                  <div className="flex items-center gap-3">
                     <input
                       type="number"
                       value={editedCommission}
-                      onChange={(e) => setEditedCommission(parseFloat(e.target.value))}
-                      className="flex-1 border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      onChange={(e) => setEditedCommission(parseFloat(e.target.value) || 0)}
+                      className="flex-1 border-2 border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 text-lg font-bold"
                       step="0.5"
                       min="0"
                       max="100"
                     />
-                    <span className="text-sm font-bold text-gray-700">%</span>
+                    <span className="text-lg font-bold text-gray-700">%</span>
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-semibold text-gray-700 block mb-2">Salary Min (£)</label>
+                  <label className="text-sm font-bold text-gray-700 block mb-3">Salary Min (£)</label>
                   <input
                     type="number"
                     value={editedSalaryMin}
-                    onChange={(e) => setEditedSalaryMin(parseInt(e.target.value))}
-                    className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    onChange={(e) => setEditedSalaryMin(parseInt(e.target.value) || 0)}
+                    className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 text-lg font-bold"
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-semibold text-gray-700 block mb-2">Salary Max (£)</label>
+                  <label className="text-sm font-bold text-gray-700 block mb-3">Salary Max (£)</label>
                   <input
                     type="number"
                     value={editedSalaryMax}
-                    onChange={(e) => setEditedSalaryMax(parseInt(e.target.value))}
-                    className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    onChange={(e) => setEditedSalaryMax(parseInt(e.target.value) || 0)}
+                    className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 text-lg font-bold"
                   />
                 </div>
               </div>
-              <div className="grid md:grid-cols-2 gap-4 mt-4 p-3 bg-white rounded border border-amber-100">
-                <p className="text-sm text-gray-700">
-                  <strong>Estimated Commission Fee:</strong><br />
-                  <span className="text-lg font-bold text-amber-700">£{Math.round((editedSalaryMax * editedCommission) / 100).toLocaleString()}</span>
-                </p>
-                <p className="text-sm text-gray-700">
-                  <strong>Salary Range:</strong><br />
-                  <span className="text-lg font-bold text-emerald-700">£{editedSalaryMin.toLocaleString()} - £{editedSalaryMax.toLocaleString()}</span>
-                </p>
+              <div className="grid md:grid-cols-2 gap-6 p-6 bg-amber-50 rounded-2xl border-2 border-amber-100">
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-2">Estimated Commission Fee:</p>
+                  <p className="text-3xl font-black text-amber-700">£{Math.round((editedSalaryMax * editedCommission) / 100).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-2">Salary Range:</p>
+                  <p className="text-3xl font-black text-emerald-700">£{editedSalaryMin.toLocaleString()} - £{editedSalaryMax.toLocaleString()}</p>
+                </div>
               </div>
             </div>
 
@@ -462,7 +496,7 @@ export default function AgencyInterestDetailPage({ params }: { params: { id: str
             />
           </div>
         ) : interest.right_to_represent_signed ? (
-          <p className="text-gray-600 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+          <p className="text-gray-600 p-6 bg-yellow-50 rounded-2xl border-2 border-yellow-200 text-lg">
             AI summary not yet generated. Click the "Generate / Refresh AI Summary Card" button above to create it.
           </p>
         ) : null}
