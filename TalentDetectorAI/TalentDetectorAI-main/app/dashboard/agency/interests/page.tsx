@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { 
   Sparkles, Award, Loader2, Send, ArrowLeft, RefreshCw,
   ArrowRight, Eye, FileText, CheckCircle, Mail, Calendar, Zap,
-  Users
+  Users, AlertCircle
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
@@ -21,7 +21,6 @@ export default function AgencyInterestsPage() {
     console.log('🚀 Component mounted')
     loadInterests()
     
-    // Real-time subscription
     const supabase = createClient()
     
     console.log('📡 Setting up real-time subscription...')
@@ -39,7 +38,6 @@ export default function AgencyInterestsPage() {
         console.log('📡 Subscription status:', status)
       })
 
-    // Polling fallback every 5 seconds
     const interval = setInterval(() => {
       console.log('🔄 Auto-refresh triggered')
       loadInterests()
@@ -100,8 +98,10 @@ export default function AgencyInterestsPage() {
         setDebugInfo('No interests found for this user')
         console.warn('⚠️ No interests found')
       } else {
-        setDebugInfo(`Loaded ${data.length} interests successfully`)
-        console.log('✅ First interest:', data[0])
+        setDebugInfo(`✅ Loaded ${data.length} interests successfully`)
+        console.log('📊 Sample interest:', data[0])
+        const cvCount = data.filter(i => i.cv_url).length
+        console.log(`📄 ${cvCount}/${data.length} candidates uploaded CVs`)
       }
 
       setInterests(data || [])
@@ -143,7 +143,6 @@ export default function AgencyInterestsPage() {
       <DynamicBackground page="agency-interests" />
       
       <div className="max-w-7xl mx-auto relative z-10">
-        {/* Header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent mb-3 flex items-center gap-3">
@@ -171,88 +170,73 @@ export default function AgencyInterestsPage() {
           </div>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-white rounded-2xl p-4 shadow-lg text-center">
             <Send className="w-8 h-8 text-blue-600 mx-auto mb-2" />
             <p className="text-4xl font-bold">{stats.total}</p>
             <p className="text-xs text-gray-600 font-bold">Total</p>
           </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-white rounded-2xl p-4 shadow-lg text-center">
             <Eye className="w-8 h-8 text-blue-600 mx-auto mb-2" />
             <p className="text-4xl font-bold text-blue-600">{stats.viewed}</p>
             <p className="text-xs text-gray-600 font-bold">Viewed</p>
           </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-white rounded-2xl p-4 shadow-lg text-center">
             <FileText className="w-8 h-8 text-purple-600 mx-auto mb-2" />
             <p className="text-4xl font-bold text-purple-600">{stats.cvs}</p>
             <p className="text-xs text-gray-600 font-bold">CVs</p>
           </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-white rounded-2xl p-4 shadow-lg text-center">
             <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" />
             <p className="text-4xl font-bold text-green-600">{stats.interested}</p>
             <p className="text-xs text-gray-600 font-bold">Interested</p>
           </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-2xl p-4 shadow-lg text-center">
             <Zap className="w-8 h-8 mx-auto mb-2" />
             <p className="text-4xl font-bold">{stats.needsRTR}</p>
             <p className="text-xs font-bold">Need RTR</p>
           </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            className="bg-gradient-to-br from-green-500 to-emerald-600 text-white rounded-2xl p-4 shadow-lg text-center">
+          <motion.div whileHover={{ scale: 1.05 }} className="bg-gradient-to-br from-green-500 to-emerald-600 text-white rounded-2xl p-4 shadow-lg text-center">
             <Award className="w-8 h-8 mx-auto mb-2" />
             <p className="text-4xl font-bold">{stats.completed}</p>
             <p className="text-xs font-bold">Signed</p>
           </motion.div>
         </div>
 
-        {/* Action Banner */}
         {stats.needsRTR > 0 && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-6 shadow-2xl">
-            <div className="flex items-center gap-4">
-              <Zap className="w-12 h-12 animate-pulse" />
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-8 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white rounded-3xl p-8 shadow-2xl border-4 border-amber-300">
+            <div className="flex items-center gap-6">
+              <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-xl">
+                <Zap className="w-10 h-10 animate-pulse" />
+              </div>
               <div className="flex-1">
-                <h3 className="text-2xl font-bold mb-2">
-                  ⚡ {stats.needsRTR} Candidate{stats.needsRTR > 1 ? 's' : ''} Ready for RTR!
-                </h3>
-                <p className="text-amber-100">
-                  Click on candidates below to generate and send RTR agreements
-                </p>
+                <h3 className="text-3xl font-black mb-3">⚡ {stats.needsRTR} CANDIDATE{stats.needsRTR > 1 ? 'S' : ''} READY FOR RTR!</h3>
+                <p className="text-xl text-amber-100 font-semibold">Click on candidates below to generate and send RTR agreements for signing</p>
               </div>
             </div>
           </motion.div>
         )}
 
-        {/* Clickable Interests List */}
+        {interests.filter(i => i.candidate_acceptance_status === 'pending_response').length > 0 && (
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mb-8 bg-gradient-to-r from-yellow-400 to-yellow-500 text-yellow-900 rounded-3xl p-8 shadow-2xl border-4 border-yellow-300">
+            <div className="flex items-center gap-6">
+              <AlertCircle className="w-12 h-12" />
+              <div>
+                <h3 className="text-2xl font-black">⏳ {interests.filter(i => i.candidate_acceptance_status === 'pending_response').length} Candidate{interests.filter(i => i.candidate_acceptance_status === 'pending_response').length > 1 ? 's' : ''} Awaiting Response</h3>
+                <p className="text-lg font-semibold mt-1">Candidates have been invited but haven't responded yet</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         <div className="space-y-4">
           <AnimatePresence mode="popLayout">
             {interests.length === 0 ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="bg-white rounded-2xl p-20 text-center shadow-lg">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white rounded-2xl p-20 text-center shadow-lg">
                 <Users className="w-32 h-32 text-gray-300 mx-auto mb-8" />
                 <h3 className="text-3xl font-bold mb-4">No Interests Yet</h3>
-                <p className="text-xl text-gray-600 mb-4">
-                  Candidates you invite will appear here
-                </p>
-                <p className="text-sm text-gray-500">
-                  Debug info: {debugInfo}
-                </p>
+                <p className="text-xl text-gray-600 mb-4">Candidates you invite will appear here</p>
+                <p className="text-sm text-gray-500">Debug info: {debugInfo}</p>
               </motion.div>
             ) : (
               interests.map((interest: any, index: number) => {
@@ -260,30 +244,10 @@ export default function AgencyInterestsPage() {
                 const job = interest.jobs
                 const needsRTR = interest.cv_url && interest.status === 'interested' && !interest.right_to_represent_url
 
-                console.log(`Card ${index}:`, {
-                  id: interest.id,
-                  candidate: candidate?.name,
-                  job: job?.title,
-                  needsRTR
-                })
-
                 return (
-                  <motion.div
-                    key={interest.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ delay: index * 0.05 }}
-                    whileHover={{ scale: 1.02, y: -4 }}
-                    className="relative">
+                  <motion.div key={interest.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ delay: index * 0.05 }} whileHover={{ scale: 1.02, y: -4 }} className="relative">
                     <Link href={`/dashboard/agency/interests/${interest.id}`}>
-                      <div
-                        className={`bg-white rounded-2xl p-6 shadow-lg border-2 cursor-pointer transition-all ${
-                          needsRTR 
-                            ? 'border-amber-400 shadow-amber-200 hover:shadow-2xl' 
-                            : 'border-gray-200 hover:border-blue-400 hover:shadow-xl'
-                        }`}>
-                        
+                      <div className={`bg-white rounded-2xl p-6 shadow-lg border-2 cursor-pointer transition-all ${needsRTR ? 'border-amber-400 shadow-amber-200 hover:shadow-2xl' : 'border-gray-200 hover:border-blue-400 hover:shadow-xl'}`}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4 flex-1">
                             <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg">
@@ -292,39 +256,48 @@ export default function AgencyInterestsPage() {
                             
                             <div className="flex-1">
                               <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-2xl font-bold text-gray-900">
-                                  {candidate?.name || 'Unknown'}
-                                </h3>
+                                <h3 className="text-2xl font-bold text-gray-900">{candidate?.name || 'Unknown'}</h3>
                                 {needsRTR && (
-                                  <span className="px-3 py-1 bg-amber-500 text-white rounded-full text-xs font-bold animate-pulse">
-                                    ⚡ CLICK TO GENERATE RTR
-                                  </span>
+                                  <span className="px-3 py-1 bg-amber-500 text-white rounded-full text-xs font-bold animate-pulse">⚡ CLICK TO GENERATE RTR</span>
                                 )}
                               </div>
                               <p className="text-gray-600 mb-3 text-lg">{job?.title || 'No title'}</p>
                               
-                              <div className="flex flex-wrap gap-2 mb-2">
+                              <div className="flex flex-wrap gap-3 mb-3">
                                 {interest.status === 'interested' && (
-                                  <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-bold">
-                                    <CheckCircle className="w-4 h-4 inline mr-1" />
+                                  <span className="px-4 py-2 bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 rounded-full text-xs font-bold shadow-sm border border-green-200 flex items-center gap-2">
+                                    <CheckCircle className="w-4 h-4" />
                                     Interested
                                   </span>
                                 )}
+                                {interest.candidate_acceptance_status === 'pending_response' && (
+                                  <span className="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold shadow-sm border border-yellow-200 flex items-center gap-2 animate-pulse">
+                                    <AlertCircle className="w-4 h-4" />
+                                    Awaiting Response
+                                  </span>
+                                )}
                                 {interest.cv_url && (
-                                  <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-bold">
-                                    <FileText className="w-4 h-4 inline mr-1" />
+                                  <span className="px-4 py-2 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800 rounded-full text-xs font-bold shadow-sm border border-purple-200 flex items-center gap-2">
+                                    <FileText className="w-4 h-4" />
                                     CV Uploaded
                                   </span>
                                 )}
                                 {interest.ai_match_score && (
-                                  <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold">
-                                    <Award className="w-4 h-4 inline mr-1" />
+                                  <span className="px-4 py-2 bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-800 rounded-full text-xs font-bold shadow-sm border border-emerald-200 flex items-center gap-2">
+                                    <Award className="w-4 h-4" />
                                     {interest.ai_match_score}% Match
                                   </span>
                                 )}
+                                {interest.right_to_represent_url && !interest.right_to_represent_signed && (
+                                  <span className="px-4 py-2 bg-gradient-to-r from-orange-100 to-amber-100 text-orange-800 rounded-full text-xs font-bold shadow-sm border border-orange-200 flex items-center gap-2 animate-pulse">
+                                    <Zap className="w-4 h-4" />
+                                    RTR Pending
+                                  </span>
+                                )}
                                 {interest.right_to_represent_signed && (
-                                  <span className="px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-full text-sm font-bold">
-                                    ✓ RTR Signed
+                                  <span className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-full text-xs font-bold shadow-sm flex items-center gap-2">
+                                    <CheckCircle className="w-4 h-4" />
+                                    RTR Signed ✓
                                   </span>
                                 )}
                               </div>
