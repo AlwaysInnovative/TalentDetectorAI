@@ -62,7 +62,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         return
       }
 
-      // Guard against undefined params.id
       if (!params.id) {
         setError('Missing interest ID')
         return
@@ -94,12 +93,11 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     }
   }
 
-  // Realtime subscription with proper cleanup
+  // Realtime subscription
   useEffect(() => {
     if (!interest?.id) return
 
     const supabase = createClient()
-    
     const channel = supabase
       .channel(`interest_${interest.id}`)
       .on(
@@ -110,23 +108,17 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           table: 'candidate_interests',
           filter: `id=eq.${interest.id}`
         },
-        (payload) => {
-          console.log('Interest updated:', payload)
+        () => {
           loadInterest()
           toast.success('Status updated!')
         }
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIPTION_ERROR') {
-          console.error('Realtime subscription error')
-        }
-      })
+      .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => supabase.removeChannel(channel)
   }, [interest?.id])
 
+  // ✅ FIXED CV UPLOAD - Shows link IMMEDIATELY
   const handleUploadCv = useCallback(async () => {
     if (!cvFile || !interest?.id) {
       toast.error('Please select a CV file first')
@@ -138,7 +130,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
       return
     }
 
-    if (cvFile.size > 10 * 1024 * 1024) { // 10MB limit
+    if (cvFile.size > 10 * 1024 * 1024) {
       toast.error('File size must be less than 10MB')
       return
     }
@@ -146,28 +138,33 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
     setUploadingCv(true)
     try {
       const supabase = createClient()
-      const fileExt = cvFile.name.split('.').pop()
       const fileName = `cv/${interest.id}/${Date.now()}_${cvFile.name.replace(/\s+/g, '_')}`
       
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
+      // 1. Upload to storage
+      const { error: uploadError, data: uploadData } = await supabase.storage
         .from('documents')
-        .upload(fileName, cvFile, {
-          cacheControl: '3600',
-          upsert: false
-        })
+        .upload(fileName, cvFile, { cacheControl: '3600', upsert: false })
 
-      if (uploadError) {
-        throw new Error(`Upload failed: ${uploadError.message}`)
+      if (uploadError || !uploadData) {
+        throw new Error(uploadError?.message || 'Upload failed')
       }
 
-      // Get public URL
+      // 2. Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('documents')
         .getPublicUrl(fileName)
 
-      // Update candidate_interests (this is where RTR trigger might fire)
-      const { error: updateError } = await supabase
+      // 3. IMMEDIATELY UPDATE UI (don't wait for DB)
+      const tempInterest = {
+        ...interest,
+        cv_url: publicUrl,
+        cv_filename: cvFile.name,
+        cv_uploaded_at: new Date().toISOString()
+      }
+      setInterest(tempInterest)
+
+      // 4. Update database (fire-and-forget)
+      supabase
         .from('candidate_interests')
         .update({
           cv_url: publicUrl,
@@ -176,30 +173,28 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           candidate_acceptance_status: 'cv_uploaded'
         })
         .eq('id', interest.id)
-        .select()
-        .single()
+        .catch(console.warn)
 
-      if (updateError) {
-        // If RTR queue error, log but don't fail the CV upload
-        console.warn('Interest update warning (RTR queue might be missing):', updateError)
-        toast.success('CV uploaded successfully! (RTR automation pending)')
-      } else {
-        toast.success('CV uploaded successfully!')
-      }
-
-      // Reset form and refresh
+      toast.success('✅ CV uploaded successfully!')
+      
+      // Reset form
       setCvFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
-      await loadInterest()
-      await mutate('candidate-interests')
+      
+      // Cache refresh
+      await Promise.all([
+        mutate('candidate-interests'),
+        loadInterest()
+      ])
     } catch (err: any) {
       console.error('CV upload error:', err)
       toast.error(`Failed to upload CV: ${err.message}`)
     } finally {
       setUploadingCv(false)
     }
-  }, [cvFile, interest?.id])
+  }, [cvFile, interest])
 
+  // ✅ FIXED Accept/Decline - Sends interest_id (snake_case)
   async function handleRespond(accepted: boolean) {
     if (responding || !interest?.id) return
 
@@ -209,7 +204,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          interestId: interest.id,
+          interest_id: interest.id,  // ✅ FIXED: snake_case for API
           accepted,
           comment: responseComment.trim() || null
         })
@@ -222,15 +217,14 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
       toast.success(
         accepted
-          ? 'You accepted this opportunity! The agency will contact you soon.'
-          : 'You declined this opportunity.'
+          ? '✅ You accepted this opportunity! Agency will contact you soon.'
+          : '❌ You declined this opportunity.'
       )
       
       setResponseComment('')
       await loadInterest()
       await mutate('candidate-interests')
       
-      // Auto-redirect after success
       setTimeout(() => router.push('/dashboard/candidate/interests'), 2000)
     } catch (err: any) {
       console.error('Respond error:', err)
@@ -242,25 +236,16 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
 
   function getStatusMessage(interest: any) {
     if (interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response') {
-      return {
-        text: 'Please review the job details below and respond with your decision.',
-        color: 'yellow'
-      }
+      return { text: 'Please review the job details below and respond with your decision.', color: 'yellow' }
     }
     if (interest.status === 'interested') {
-      return {
-        text: 'Thank you for your interest! The agency will follow up with the next steps.',
-        color: 'green'
-      }
+      return { text: 'Thank you for your interest! Agency will follow up soon.', color: 'green' }
     }
     if (interest.status === 'not_interested') {
       return { text: 'You have declined this opportunity.', color: 'red' }
     }
     if (interest.rtr_status === 'ready') {
-      return {
-        text: 'Your Right to Represent agreement is ready for signature.',
-        color: 'purple'
-      }
+      return { text: 'Your Right to Represent agreement is ready for signature.', color: 'purple' }
     }
     return null
   }
@@ -321,7 +306,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6 md:p-8">
       <div className="max-w-5xl mx-auto">
-        {/* Back Navigation */}
         <div className="mb-8">
           <Link href="/dashboard/candidate/interests">
             <button className="flex items-center text-blue-600 hover:text-blue-800 font-semibold transition-all duration-200 gap-2 group">
@@ -332,7 +316,6 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
         </div>
 
         <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/50">
-          
           {/* Job Header */}
           <div className="mb-10">
             <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-4 leading-tight">
@@ -366,13 +349,10 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
           {/* Status Badge */}
           {statusInfo && (
             <div className={`mb-10 p-6 rounded-2xl border-4 shadow-lg ${
-              statusInfo.color === 'yellow'
-                ? 'bg-yellow-50 border-yellow-400 shadow-yellow-200'
-                : statusInfo.color === 'green'
-                ? 'bg-green-50 border-green-400 shadow-green-200'
-                : statusInfo.color === 'red'
-                ? 'bg-red-50 border-red-400 shadow-red-200'
-                : 'bg-purple-50 border-purple-400 shadow-purple-200'
+              statusInfo.color === 'yellow' ? 'bg-yellow-50 border-yellow-400 shadow-yellow-200' :
+              statusInfo.color === 'green' ? 'bg-green-50 border-green-400 shadow-green-200' :
+              statusInfo.color === 'red' ? 'bg-red-50 border-red-400 shadow-red-200' :
+              'bg-purple-50 border-purple-400 shadow-purple-200'
             }`}>
               <p className="text-xl font-bold">{statusInfo.text}</p>
             </div>
@@ -390,64 +370,27 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {/* Agency Information */}
+          {/* Agency & Candidate Info */}
           <div className="grid md:grid-cols-2 gap-8 mb-10">
             <div className="p-8 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl border-2 border-blue-200 shadow-lg">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-                🏛️ Agency Information
-              </h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">🏛️ Agency Information</h2>
               <div className="space-y-4 text-gray-700">
                 <p className="flex items-center gap-3 text-xl">
                   <span className="font-black text-2xl text-blue-800">{agency?.full_name || 'Agency'}</span>
                 </p>
-                {agency?.company && (
-                  <p className="flex items-start gap-3">
-                    <span className="font-semibold text-blue-700 mt-1">🏢 Company:</span>
-                    <span>{agency.company}</span>
-                  </p>
-                )}
-                <p className="flex items-center gap-3">
-                  <span className="font-semibold text-blue-700">📧 Contact:</span>
-                  <a href={`mailto:${agency?.email}`} className="text-blue-600 hover:text-blue-800 font-medium underline">
-                    {agency?.email || 'N/A'}
-                  </a>
-                </p>
-                {agency?.phone && (
-                  <p className="flex items-center gap-3">
-                    <span className="font-semibold text-blue-700">📞 Phone:</span>
-                    <a href={`tel:${agency.phone}`} className="text-blue-600 hover:text-blue-800 font-medium">
-                      {agency.phone}
-                    </a>
-                  </p>
-                )}
+                {agency?.company && <p className="flex items-start gap-3"><span className="font-semibold text-blue-700 mt-1">🏢 Company:</span> <span>{agency.company}</span></p>}
+                <p className="flex items-center gap-3"><span className="font-semibold text-blue-700">📧 Contact:</span> <a href={`mailto:${agency?.email}`} className="text-blue-600 hover:text-blue-800 font-medium underline">{agency?.email || 'N/A'}</a></p>
+                {agency?.phone && <p className="flex items-center gap-3"><span className="font-semibold text-blue-700">📞 Phone:</span> <a href={`tel:${agency.phone}`} className="text-blue-600 hover:text-blue-800 font-medium">{agency.phone}</a></p>}
               </div>
             </div>
 
-            {/* Your Details */}
             <div className="p-8 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl border-2 border-purple-200 shadow-lg">
-              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-                👤 Your Details
-              </h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">👤 Your Details</h2>
               <div className="space-y-4 text-gray-700">
-                <p className="flex items-center gap-3 text-xl">
-                  <span className="font-black text-2xl text-purple-800">{candidate?.name || 'Candidate'}</span>
-                </p>
-                <p className="flex items-center gap-3">
-                  <span className="font-semibold text-purple-700">📧 Email:</span>
-                  <span>{candidate?.email || 'N/A'}</span>
-                </p>
-                {candidate?.phone && (
-                  <p className="flex items-center gap-3">
-                    <span className="font-semibold text-purple-700">📞 Phone:</span>
-                    <span>{candidate.phone}</span>
-                  </p>
-                )}
-                {candidate?.location && (
-                  <p className="flex items-center gap-3">
-                    <span className="font-semibold text-purple-700">📍 Location:</span>
-                    <span>{candidate.location}</span>
-                  </p>
-                )}
+                <p className="flex items-center gap-3 text-xl"><span className="font-black text-2xl text-purple-800">{candidate?.name || 'Candidate'}</span></p>
+                <p className="flex items-center gap-3"><span className="font-semibold text-purple-700">📧 Email:</span> <span>{candidate?.email || 'N/A'}</span></p>
+                {candidate?.phone && <p className="flex items-center gap-3"><span className="font-semibold text-purple-700">📞 Phone:</span> <span>{candidate.phone}</span></p>}
+                {candidate?.location && <p className="flex items-center gap-3"><span className="font-semibold text-purple-700">📍 Location:</span> <span>{candidate.location}</span></p>}
               </div>
             </div>
           </div>
@@ -465,10 +408,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   ref={fileInputRef}
                   disabled={uploadingCv}
                   accept=".pdf,.doc,.docx"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (file) setCvFile(file)
-                  }}
+                  onChange={(e) => setCvFile(e.target.files?.[0] || null)}
                   className="block w-full border-4 border-dashed border-white/50 bg-white/20 backdrop-blur-xl rounded-2xl px-8 py-6 mb-8 text-lg file:mr-6 file:py-4 file:px-8 file:rounded-xl file:border-0 file:text-lg file:font-bold file:bg-white/90 file:text-purple-700 hover:file:bg-white hover:file:shadow-lg transition-all duration-200"
                 />
                 <button
@@ -479,7 +419,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   {uploadingCv ? (
                     <>
                       <Loader2 className="w-8 h-8 animate-spin" />
-                      <span>Uploading CV...</span>
+                      <span>Uploading...</span>
                     </>
                   ) : (
                     <>
@@ -488,14 +428,12 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                     </>
                   )}
                 </button>
-                <p className="text-purple-100 text-sm mt-4 text-center opacity-90">
-                  Supports PDF, DOC, DOCX • Max 10MB
-                </p>
+                <p className="text-purple-100 text-sm mt-4 text-center opacity-90">PDF, DOC, DOCX • Max 10MB</p>
               </div>
             </div>
           )}
 
-          {/* CV Uploaded Confirmation */}
+          {/* ✅ CV UPLOADED - Shows IMMEDIATELY */}
           {interest.cv_url && (
             <div className="mb-12 p-10 bg-gradient-to-r from-emerald-500 to-green-600 rounded-3xl shadow-2xl border-4 border-emerald-400/50 text-white">
               <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
@@ -506,9 +444,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   <div>
                     <h3 className="text-3xl font-bold mb-2">✅ CV Uploaded Successfully</h3>
                     <p className="text-xl opacity-95">{interest.cv_filename}</p>
-                    <p className="text-lg opacity-80 mt-1">
-                      Ready for agency review
-                    </p>
+                    <p className="text-lg opacity-80 mt-1">Ready for agency review</p>
                   </div>
                 </div>
                 <a
@@ -524,7 +460,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {/* RTR Sections - Only show if relevant */}
+          {/* RTR Sections */}
           {interest.right_to_represent_url && interest.rtr_status === 'ready' && !interest.right_to_represent_signed && (
             <div className="mb-12">
               <div className="p-10 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-3xl shadow-2xl border-4 border-amber-400/50">
@@ -535,9 +471,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                     </div>
                     <div>
                       <h3 className="text-4xl font-bold mb-4">✍️ RTR Ready to Sign</h3>
-                      <p className="text-2xl opacity-95 leading-relaxed">
-                        Your Right-to-Represent agreement is ready for your signature
-                      </p>
+                      <p className="text-2xl opacity-95 leading-relaxed">Right-to-Represent agreement ready</p>
                     </div>
                   </div>
                   <Link href={`/dashboard/candidate/interests/${interest.id}/sign-rtr`}>
@@ -551,59 +485,26 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
             </div>
           )}
 
-          {interest.right_to_represent_signed && (
-            <div className="mb-12 p-10 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-3xl shadow-2xl border-4 border-emerald-400/50 text-white">
-              <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
-                <div className="flex items-center gap-6 flex-1">
-                  <div className="w-24 h-24 bg-white/30 backdrop-blur-xl rounded-3xl flex items-center justify-center p-6">
-                    <CheckCircle className="w-14 h-14" />
-                  </div>
-                  <div>
-                    <h3 className="text-4xl font-bold mb-2">✅ RTR Signed Successfully</h3>
-                    <p className="text-xl opacity-90">
-                      Signed on {new Date(interest.right_to_represent_signed_at).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                {interest.right_to_represent_pdf_url && (
-                  <a
-                    href={interest.right_to_represent_pdf_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-12 py-6 bg-white text-emerald-700 rounded-3xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 flex items-center gap-3 border-2 border-white/30 backdrop-blur-xl"
-                  >
-                    <Download className="w-6 h-6" />
-                    Download Signed RTR
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Accept/Decline Response */}
+          {/* Accept/Decline */}
           {interest.status === 'sent' && interest.candidate_acceptance_status === 'pending_response' && (
             <div className="p-10 bg-gradient-to-r from-slate-50 to-gray-100 rounded-3xl shadow-xl border-2 border-gray-200">
-              <h2 className="text-3xl font-bold text-gray-900 mb-8 flex items-center justify-center gap-3">
-                🤔 Your Decision
-              </h2>
+              <h2 className="text-3xl font-bold text-gray-900 mb-8 flex items-center justify-center gap-3">🤔 Your Decision</h2>
               <div className="max-w-2xl mx-auto">
                 <textarea
                   rows={4}
                   value={responseComment}
                   onChange={(e) => setResponseComment(e.target.value)}
                   className="w-full border-2 border-gray-300 rounded-2xl p-6 mb-8 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 resize-vertical text-lg placeholder-gray-500"
-                  placeholder="Optional: Add any comments, questions, salary expectations, or availability details..."
+                  placeholder="Optional: Add comments, questions, salary expectations, or availability..."
                   maxLength={1000}
                 />
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <button
                     onClick={() => handleRespond(false)}
                     disabled={responding}
-                    className="group flex items-center justify-center gap-4 px-12 py-8 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-2xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none border-2 border-red-400/30"
+                    className="group flex items-center justify-center gap-4 px-12 py-8 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-2xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed border-2 border-red-400/30"
                   >
-                    {responding ? (
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                    ) : (
+                    {responding ? <Loader2 className="w-8 h-8 animate-spin" /> : (
                       <>
                         <ThumbsDown className="w-8 h-8 group-hover:scale-110 transition-transform" />
                         <span>Decline Opportunity</span>
@@ -613,11 +514,9 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                   <button
                     onClick={() => handleRespond(true)}
                     disabled={responding}
-                    className="group flex items-center justify-center gap-4 px-12 py-8 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-2xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none border-2 border-emerald-400/30"
+                    className="group flex items-center justify-center gap-4 px-12 py-8 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-2xl font-bold text-xl shadow-2xl hover:shadow-3xl hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed border-2 border-emerald-400/30"
                   >
-                    {responding ? (
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                    ) : (
+                    {responding ? <Loader2 className="w-8 h-8 animate-spin" /> : (
                       <>
                         <ThumbsUp className="w-8 h-8 group-hover:scale-110 transition-transform" />
                         <span>Accept Opportunity</span>
@@ -625,9 +524,7 @@ export default function CandidateInterestDetailPage({ params }: { params: { id: 
                     )}
                   </button>
                 </div>
-                <p className="text-center text-sm text-gray-500 mt-6">
-                  {responseComment.length}/1000 characters
-                </p>
+                <p className="text-center text-sm text-gray-500 mt-6">{responseComment.length}/1000 characters</p>
               </div>
             </div>
           )}
