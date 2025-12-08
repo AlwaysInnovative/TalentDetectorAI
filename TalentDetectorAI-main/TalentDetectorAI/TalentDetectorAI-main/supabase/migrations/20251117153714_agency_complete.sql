@@ -1,0 +1,95 @@
+-- Agency-owned candidates
+CREATE TABLE IF NOT EXISTS agency_candidates (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  phone TEXT,
+  cv_url TEXT,
+  parsed_cv JSONB,
+  skills JSONB,
+  experience_years INTEGER,
+  current_role TEXT,
+  summary TEXT,
+  ai_enrichment JSONB,
+  profile_completeness INTEGER DEFAULT 0,
+  embedding vector(1536),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(agency_id, email)
+);
+
+-- Job submissions by agency
+CREATE TABLE IF NOT EXISTS agency_submissions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  job_id UUID REFERENCES jobs(id),
+  candidate_id UUID REFERENCES agency_candidates(id),
+  ai_match_score INTEGER,
+  match_reasoning TEXT,
+  status TEXT DEFAULT 'submitted',
+  submitted_at TIMESTAMP DEFAULT NOW(),
+  feedback TEXT,
+  viewed_by_manager BOOLEAN DEFAULT FALSE
+);
+
+-- RTR tracking
+CREATE TABLE IF NOT EXISTS rtr_tracking (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  candidate_id UUID REFERENCES agency_candidates(id),
+  job_id UUID REFERENCES jobs(id),
+  docusign_envelope_id TEXT,
+  status TEXT DEFAULT 'draft',
+  sent_at TIMESTAMP,
+  viewed_at TIMESTAMP,
+  signed_at TIMESTAMP,
+  completed_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Commission tracking
+CREATE TABLE IF NOT EXISTS agency_commissions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  submission_id UUID REFERENCES agency_submissions(id),
+  base_amount DECIMAL(10,2),
+  bonus_amount DECIMAL(10,2),
+  total_amount DECIMAL(10,2),
+  status TEXT DEFAULT 'pending',
+  paid_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Candidate preparation notes
+CREATE TABLE IF NOT EXISTS candidate_prep_notes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  candidate_id UUID REFERENCES agency_candidates(id),
+  job_id UUID REFERENCES jobs(id),
+  ai_suggestions JSONB,
+  custom_notes TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Automated workflows
+CREATE TABLE IF NOT EXISTS agency_automations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  agency_id UUID REFERENCES auth.users(id),
+  automation_type TEXT NOT NULL,
+  config JSONB,
+  enabled BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_agency_candidates_agency ON agency_candidates(agency_id);
+CREATE INDEX IF NOT EXISTS idx_agency_candidates_email ON agency_candidates(email);
+CREATE INDEX IF NOT EXISTS idx_submissions_agency ON agency_submissions(agency_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_job ON agency_submissions(job_id);
+CREATE INDEX IF NOT EXISTS idx_rtr_agency ON rtr_tracking(agency_id);
+CREATE INDEX IF NOT EXISTS idx_commissions_agency ON agency_commissions(agency_id);
+
+-- Enable vector similarity search
+CREATE INDEX IF NOT EXISTS idx_candidates_embedding ON agency_candidates 
+USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
