@@ -4,15 +4,51 @@ import { createClient } from '@/lib/supabase/client'
 import { 
   Sparkles, Award, Loader2, Send, ArrowLeft, RefreshCw,
   ArrowRight, Eye, FileText, CheckCircle, Mail, Calendar, Zap,
-  Users, AlertCircle
+  Users, AlertCircle, Briefcase, MapPin
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import DynamicBackground from '@/components/ui/DynamicBackground'
 
+interface Candidate {
+  id: string
+  name: string | null
+  email: string | null
+  phone: string | null
+  location: string | null
+  user_id: string
+  skills: string[] | null
+}
+
+interface Job {
+  id: string
+  title: string | null
+  location: string | null
+  salary_min: number | null
+  salary_max: number | null
+  employment_type: string | null
+}
+
+interface Interest {
+  id: string
+  agency_id: string
+  candidate_id: string
+  job_id: string | null
+  status: string
+  candidate_acceptance_status: string
+  cv_url: string | null
+  right_to_represent_url: string | null
+  right_to_represent_signed: boolean
+  ai_match_score: number | null
+  viewed_by_candidate: boolean
+  created_at: string
+  candidates: Candidate | null
+  jobs: Job | null
+}
+
 export default function AgencyInterestsPage() {
-  const [interests, setInterests] = useState<any[]>([])
+  const [interests, setInterests] = useState<Interest[]>([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
   const [debugInfo, setDebugInfo] = useState<string>('')
@@ -75,11 +111,12 @@ export default function AgencyInterestsPage() {
       console.log('✅ User ID:', user.id)
       setDebugInfo(`Loading for user: ${user.id}`)
 
+      // Enhanced query with LEFT JOIN behavior and null handling
       const { data, error } = await supabase
         .from('candidate_interests')
         .select(`
           *,
-          candidates(id, name, email, phone, location, user_id, skills),
+          candidates!inner(id, name, email, phone, location, user_id, skills),
           jobs(id, title, location, salary_min, salary_max, employment_type)
         `)
         .eq('agency_id', user.id)
@@ -88,7 +125,44 @@ export default function AgencyInterestsPage() {
       if (error) {
         console.error('❌ Fetch error:', error)
         setDebugInfo(`Fetch error: ${error.message}`)
-        throw error
+        
+        // Fallback query without jobs join if RLS is blocking
+        console.log('🔄 Attempting fallback query without jobs...')
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('candidate_interests')
+          .select(`
+            *,
+            candidates!inner(id, name, email, phone, location, user_id, skills)
+          `)
+          .eq('agency_id', user.id)
+          .order('created_at', { ascending: false })
+
+        if (fallbackError) {
+          console.error('❌ Fallback query also failed:', fallbackError)
+          throw fallbackError
+        }
+
+        // Manually fetch jobs for each interest
+        const enrichedData = await Promise.all(
+          (fallbackData || []).map(async (interest) => {
+            if (interest.job_id) {
+              const { data: jobData } = await supabase
+                .from('jobs')
+                .select('id, title, location, salary_min, salary_max, employment_type')
+                .eq('id', interest.job_id)
+                .maybeSingle()
+              
+              return { ...interest, jobs: jobData }
+            }
+            return { ...interest, jobs: null }
+          })
+        )
+
+        console.log('✅ Fallback query successful with', enrichedData.length, 'interests')
+        setInterests(enrichedData as Interest[])
+        setDebugInfo(`✅ Loaded ${enrichedData.length} interests (fallback mode)`)
+        setLastUpdate(new Date())
+        return
       }
 
       console.log('✅ Loaded interests:', data?.length || 0)
@@ -98,13 +172,20 @@ export default function AgencyInterestsPage() {
         setDebugInfo('No interests found for this user')
         console.warn('⚠️ No interests found')
       } else {
-        setDebugInfo(`✅ Loaded ${data.length} interests successfully`)
+        // Filter out interests with missing candidate data
+        const validInterests = data.filter(i => i.candidates && i.candidates.name)
+        const nullJobsCount = data.filter(i => !i.jobs).length
+        
+        setDebugInfo(`✅ Loaded ${data.length} interests (${nullJobsCount} without job data)`)
         console.log('📊 Sample interest:', data[0])
+        console.log(`📊 Interests without jobs: ${nullJobsCount}/${data.length}`)
+        
         const cvCount = data.filter(i => i.cv_url).length
         console.log(`📄 ${cvCount}/${data.length} candidates uploaded CVs`)
+
+        setInterests(validInterests as Interest[])
       }
 
-      setInterests(data || [])
       setLastUpdate(new Date())
     } catch (error: any) {
       console.error('❌ Load error:', error)
@@ -239,76 +320,104 @@ export default function AgencyInterestsPage() {
                 <p className="text-sm text-gray-500">Debug info: {debugInfo}</p>
               </motion.div>
             ) : (
-              interests.map((interest: any, index: number) => {
+              interests.map((interest: Interest, index: number) => {
                 const candidate = interest.candidates
                 const job = interest.jobs
                 const needsRTR = interest.cv_url && interest.status === 'interested' && !interest.right_to_represent_url
 
+                // Safely handle missing data
+                const candidateName = candidate?.name || 'Unknown Candidate'
+                const candidateInitial = candidateName[0]?.toUpperCase() || '?'
+                const jobTitle = job?.title || 'No job title'
+                const candidateEmail = candidate?.email || 'No email'
+
                 return (
-                  <motion.div key={interest.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ delay: index * 0.05 }} whileHover={{ scale: 1.02, y: -4 }} className="relative">
+                  <motion.div 
+                    key={interest.id} 
+                    initial={{ opacity: 0, y: 20 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    exit={{ opacity: 0, y: -20 }} 
+                    transition={{ delay: index * 0.05 }} 
+                    whileHover={{ scale: 1.02, y: -4 }} 
+                    className="relative"
+                  >
                     <Link href={`/dashboard/agency/interests/${interest.id}`}>
                       <div className={`bg-white rounded-2xl p-6 shadow-lg border-2 cursor-pointer transition-all ${needsRTR ? 'border-amber-400 shadow-amber-200 hover:shadow-2xl' : 'border-gray-200 hover:border-blue-400 hover:shadow-xl'}`}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4 flex-1">
-                            <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg">
-                              {candidate?.name?.[0] || '?'}
+                            <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg flex-shrink-0">
+                              {candidateInitial}
                             </div>
                             
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-2xl font-bold text-gray-900">{candidate?.name || 'Unknown'}</h3>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                                <h3 className="text-2xl font-bold text-gray-900 truncate">{candidateName}</h3>
                                 {needsRTR && (
-                                  <span className="px-3 py-1 bg-amber-500 text-white rounded-full text-xs font-bold animate-pulse">⚡ CLICK TO GENERATE RTR</span>
+                                  <span className="px-3 py-1 bg-amber-500 text-white rounded-full text-xs font-bold animate-pulse whitespace-nowrap">⚡ CLICK TO GENERATE RTR</span>
+                                )}
+                                {!job && (
+                                  <span className="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-xs font-bold whitespace-nowrap">⚠️ No Job Data</span>
                                 )}
                               </div>
-                              <p className="text-gray-600 mb-3 text-lg">{job?.title || 'No title'}</p>
+                              
+                              <div className="flex items-center gap-2 mb-3 text-gray-600">
+                                <Briefcase className="w-4 h-4 flex-shrink-0" />
+                                <p className="text-lg truncate">{jobTitle}</p>
+                              </div>
+                              
+                              {job?.location && (
+                                <div className="flex items-center gap-2 mb-3 text-gray-500">
+                                  <MapPin className="w-4 h-4 flex-shrink-0" />
+                                  <p className="text-sm truncate">{job.location}</p>
+                                </div>
+                              )}
                               
                               <div className="flex flex-wrap gap-3 mb-3">
                                 {interest.status === 'interested' && (
                                   <span className="px-4 py-2 bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 rounded-full text-xs font-bold shadow-sm border border-green-200 flex items-center gap-2">
-                                    <CheckCircle className="w-4 h-4" />
+                                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
                                     Interested
                                   </span>
                                 )}
                                 {interest.candidate_acceptance_status === 'pending_response' && (
                                   <span className="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-full text-xs font-bold shadow-sm border border-yellow-200 flex items-center gap-2 animate-pulse">
-                                    <AlertCircle className="w-4 h-4" />
+                                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
                                     Awaiting Response
                                   </span>
                                 )}
                                 {interest.cv_url && (
                                   <span className="px-4 py-2 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800 rounded-full text-xs font-bold shadow-sm border border-purple-200 flex items-center gap-2">
-                                    <FileText className="w-4 h-4" />
+                                    <FileText className="w-4 h-4 flex-shrink-0" />
                                     CV Uploaded
                                   </span>
                                 )}
                                 {interest.ai_match_score && (
                                   <span className="px-4 py-2 bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-800 rounded-full text-xs font-bold shadow-sm border border-emerald-200 flex items-center gap-2">
-                                    <Award className="w-4 h-4" />
+                                    <Award className="w-4 h-4 flex-shrink-0" />
                                     {interest.ai_match_score}% Match
                                   </span>
                                 )}
                                 {interest.right_to_represent_url && !interest.right_to_represent_signed && (
                                   <span className="px-4 py-2 bg-gradient-to-r from-orange-100 to-amber-100 text-orange-800 rounded-full text-xs font-bold shadow-sm border border-orange-200 flex items-center gap-2 animate-pulse">
-                                    <Zap className="w-4 h-4" />
+                                    <Zap className="w-4 h-4 flex-shrink-0" />
                                     RTR Pending
                                   </span>
                                 )}
                                 {interest.right_to_represent_signed && (
                                   <span className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-full text-xs font-bold shadow-sm flex items-center gap-2">
-                                    <CheckCircle className="w-4 h-4" />
+                                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
                                     RTR Signed ✓
                                   </span>
                                 )}
                               </div>
                               
-                              <div className="flex items-center gap-4 text-sm text-gray-600">
+                              <div className="flex items-center gap-4 text-sm text-gray-600 flex-wrap">
                                 <span className="flex items-center gap-1">
-                                  <Mail className="w-4 h-4" />
-                                  {candidate?.email || 'No email'}
+                                  <Mail className="w-4 h-4 flex-shrink-0" />
+                                  <span className="truncate">{candidateEmail}</span>
                                 </span>
-                                <span className="flex items-center gap-1">
-                                  <Calendar className="w-4 h-4" />
+                                <span className="flex items-center gap-1 whitespace-nowrap">
+                                  <Calendar className="w-4 h-4 flex-shrink-0" />
                                   {new Date(interest.created_at).toLocaleDateString()}
                                 </span>
                               </div>
