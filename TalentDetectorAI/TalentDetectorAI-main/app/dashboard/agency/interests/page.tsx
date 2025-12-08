@@ -25,26 +25,28 @@ interface Job {
   id: string
   title: string | null
   location: string | null
-  salary_min: number | null
-  salary_max: number | null
+  salary_range_min: number | null
+  salary_range_max: number | null
   employment_type: string | null
+  description: string | null
 }
 
 interface Interest {
   id: string
   agency_id: string
   candidate_id: string
-  job_id: string | null
+  job_id: string
   status: string
-  candidate_acceptance_status: string
+  candidate_acceptance_status: string | null
   cv_url: string | null
+  cv_filename: string | null
   right_to_represent_url: string | null
   right_to_represent_signed: boolean
   ai_match_score: number | null
   viewed_by_candidate: boolean
   created_at: string
   candidates: Candidate | null
-  jobs: Job | null
+  job_postings: Job | null
 }
 
 export default function AgencyInterestsPage() {
@@ -64,7 +66,7 @@ export default function AgencyInterestsPage() {
       .channel('realtime-interests')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'candidate_interests' },
+        { event: '*', schema: 'public', table: 'job_interests' },
         (payload) => {
           console.log('🔔 Real-time update received:', payload)
           loadInterests()
@@ -111,13 +113,13 @@ export default function AgencyInterestsPage() {
       console.log('✅ User ID:', user.id)
       setDebugInfo(`Loading for user: ${user.id}`)
 
-      // Enhanced query with LEFT JOIN behavior and null handling
+      // ✅ FIXED: Query job_interests table with job_postings
       const { data, error } = await supabase
-        .from('candidate_interests')
+        .from('job_interests')
         .select(`
           *,
           candidates!inner(id, name, email, phone, location, user_id, skills),
-          jobs(id, title, location, salary_min, salary_max, employment_type)
+          job_postings(id, title, location, salary_range_min, salary_range_max, employment_type, description)
         `)
         .eq('agency_id', user.id)
         .order('created_at', { ascending: false })
@@ -125,44 +127,7 @@ export default function AgencyInterestsPage() {
       if (error) {
         console.error('❌ Fetch error:', error)
         setDebugInfo(`Fetch error: ${error.message}`)
-        
-        // Fallback query without jobs join if RLS is blocking
-        console.log('🔄 Attempting fallback query without jobs...')
-        const { data: fallbackData, error: fallbackError } = await supabase
-          .from('candidate_interests')
-          .select(`
-            *,
-            candidates!inner(id, name, email, phone, location, user_id, skills)
-          `)
-          .eq('agency_id', user.id)
-          .order('created_at', { ascending: false })
-
-        if (fallbackError) {
-          console.error('❌ Fallback query also failed:', fallbackError)
-          throw fallbackError
-        }
-
-        // Manually fetch jobs for each interest
-        const enrichedData = await Promise.all(
-          (fallbackData || []).map(async (interest) => {
-            if (interest.job_id) {
-              const { data: jobData } = await supabase
-                .from('jobs')
-                .select('id, title, location, salary_min, salary_max, employment_type')
-                .eq('id', interest.job_id)
-                .maybeSingle()
-              
-              return { ...interest, jobs: jobData }
-            }
-            return { ...interest, jobs: null }
-          })
-        )
-
-        console.log('✅ Fallback query successful with', enrichedData.length, 'interests')
-        setInterests(enrichedData as Interest[])
-        setDebugInfo(`✅ Loaded ${enrichedData.length} interests (fallback mode)`)
-        setLastUpdate(new Date())
-        return
+        throw error
       }
 
       console.log('✅ Loaded interests:', data?.length || 0)
@@ -172,9 +137,8 @@ export default function AgencyInterestsPage() {
         setDebugInfo('No interests found for this user')
         console.warn('⚠️ No interests found')
       } else {
-        // Filter out interests with missing candidate data
-        const validInterests = data.filter(i => i.candidates && i.candidates.name)
-        const nullJobsCount = data.filter(i => !i.jobs).length
+        const validInterests = data.filter(i => i.candidates)
+        const nullJobsCount = data.filter(i => !i.job_postings).length
         
         setDebugInfo(`✅ Loaded ${data.length} interests (${nullJobsCount} without job data)`)
         console.log('📊 Sample interest:', data[0])
@@ -322,10 +286,9 @@ export default function AgencyInterestsPage() {
             ) : (
               interests.map((interest: Interest, index: number) => {
                 const candidate = interest.candidates
-                const job = interest.jobs
+                const job = interest.job_postings
                 const needsRTR = interest.cv_url && interest.status === 'interested' && !interest.right_to_represent_url
 
-                // Safely handle missing data
                 const candidateName = candidate?.name || 'Unknown Candidate'
                 const candidateInitial = candidateName[0]?.toUpperCase() || '?'
                 const jobTitle = job?.title || 'No job title'
