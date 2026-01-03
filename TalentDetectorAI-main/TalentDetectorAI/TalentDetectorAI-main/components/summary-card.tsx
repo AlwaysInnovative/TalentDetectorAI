@@ -11,8 +11,6 @@ import {
   CheckCircle,
   AlertCircle,
   DollarSign,
-  User,
-  Clock,
 } from 'lucide-react'
 
 interface SummaryCardProps {
@@ -67,14 +65,6 @@ interface CommissionInfo {
   commission_percentage: number
 }
 
-interface RTRSignatureInfo {
-  signed: boolean
-  signed_by?: string
-  signed_at?: string
-  candidate_name?: string
-  candidate_email?: string
-}
-
 export const SummaryCard: React.FC<SummaryCardProps> = ({
   interestId,
   jobId,
@@ -91,7 +81,6 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [commission, setCommission] = useState<CommissionInfo | null>(null)
-  const [rtrInfo, setRtrInfo] = useState<RTRSignatureInfo | null>(null)
 
   const supabase = createClient()
 
@@ -117,58 +106,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     loadSummary()
   }, [interestId, onError])
 
-  // Load RTR signature info from candidate_interests
-  useEffect(() => {
-    const loadRTRInfo = async () => {
-      try {
-        console.log('🔍 Loading RTR info for interest:', interestId)
-
-        const { data: interestData, error: interestError } = await supabase
-          .from('candidate_interests')
-          .select('right_to_represent_signed, right_to_represent_signed_at, candidate_id')
-          .eq('id', interestId)
-          .single()
-
-        if (interestError || !interestData) {
-          console.warn('⚠️ Error loading interest RTR info:', interestError)
-          return
-        }
-
-        console.log('✅ Interest RTR info loaded:', interestData)
-
-        // If signed, fetch candidate info
-        if (interestData.right_to_represent_signed) {
-          const { data: candidateData, error: candidateError } = await supabase
-            .from('candidates')
-            .select('name, email')
-            .eq('id', interestData.candidate_id)
-            .single()
-
-          if (candidateError || !candidateData) {
-            console.warn('⚠️ Error loading candidate info:', candidateError)
-          }
-
-          setRtrInfo({
-            signed: true,
-            signed_by: candidateData?.name || 'Candidate',
-            signed_at: interestData.right_to_represent_signed_at,
-            candidate_name: candidateData?.name,
-            candidate_email: candidateData?.email,
-          })
-        } else {
-          setRtrInfo({
-            signed: false,
-          })
-        }
-      } catch (err) {
-        console.error('Error loading RTR info:', err)
-      }
-    }
-
-    loadRTRInfo()
-  }, [interestId, supabase])
-
-  // Load hiring manager and commission from commission proposal
+  // Load hiring manager from job and commission from proposal
   useEffect(() => {
     const loadJobCommissionAndHM = async () => {
       if (!jobId || !agencyId) return
@@ -179,7 +117,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         // Fetch job details
         const { data: jobData, error: jobError } = await supabase
           .from('jobs')
-          .select('id, salary_min, salary_max, title, hiringmanagerid, createdby')
+          .select('id, posted_by, salary_min, salary_max, title')
           .eq('id', jobId)
           .single()
 
@@ -190,12 +128,28 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
 
         console.log('✅ Job data loaded:', jobData)
 
-        // Fetch commission proposal to get manager_id
+        // Fetch hiring manager who posted the job
+        const { data: hmData, error: hmError } = await supabase
+          .from('profiles')
+          .select('id, email, full_name')
+          .eq('id', jobData.posted_by)
+          .single()
+
+        if (hmError || !hmData) {
+          console.error('Error fetching hiring manager:', hmError)
+          return
+        }
+
+        console.log('✅ Hiring Manager loaded:', hmData)
+        setHiringManagers([hmData])
+        setSelectedHM(hmData.id)
+
+        // Fetch commission proposal for this job and agency
         console.log('🔍 Fetching commission proposal...')
 
         const { data: proposalData, error: proposalError } = await supabase
           .from('commission_proposals')
-          .select('manager_id, agreed_percentage, manager_percentage')
+          .select('agreed_percentage, manager_percentage')
           .eq('job_id', jobId)
           .eq('agency_id', agencyId)
           .eq('status', 'accepted')
@@ -207,38 +161,10 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
           console.warn('⚠️ Error fetching proposal:', proposalError)
         }
 
-        // Determine hiring manager ID (priority: proposal manager > job hiringmanagerid > createdby)
-        const managerId =
-          proposalData?.manager_id ||
-          jobData.hiringmanagerid ||
-          jobData.createdby
-
-        console.log('💼 Manager ID determined:', managerId)
-
-        if (managerId) {
-          // Fetch hiring manager profile
-          const { data: hmData, error: hmError } = await supabase
-            .from('profiles')
-            .select('id, email, full_name')
-            .eq('id', managerId)
-            .single()
-
-          if (hmError || !hmData) {
-            console.error('Error fetching hiring manager:', hmError)
-            throw new Error('Could not load hiring manager profile')
-          }
-
-          console.log('✅ Hiring Manager loaded:', hmData)
-          setHiringManagers([hmData])
-          setSelectedHM(hmData.id)
-        } else {
-          throw new Error('No hiring manager found for this job')
-        }
-
         // Use agreed_percentage from proposal, fallback to manager_percentage, then default to 15
-        const commissionPercentage = proposalData?.agreed_percentage
+        const commissionPercentage = proposalData?.agreed_percentage 
           ? parseFloat(proposalData.agreed_percentage as unknown as string)
-          : proposalData?.manager_percentage
+          : proposalData?.manager_percentage 
           ? parseFloat(proposalData.manager_percentage as unknown as string)
           : 15
 
@@ -268,13 +194,11 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         })
       } catch (err) {
         console.error('Error loading job and commission:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load job details')
-        onError?.(err instanceof Error ? err.message : 'Failed to load job details')
       }
     }
 
     loadJobCommissionAndHM()
-  }, [jobId, agencyId, supabase, onError])
+  }, [jobId, agencyId, supabase])
 
   const handleGenerateSummary = async () => {
     setGenerating(true)
@@ -415,59 +339,8 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         </div>
       </div>
 
-      {/* RTR Signature Info Section */}
-      {rtrInfo && (
-        <div
-          className={`px-6 py-4 border-b ${
-            rtrInfo.signed
-              ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200'
-              : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200'
-          }`}
-        >
-          <h3 className="text-lg font-semibold mb-3 text-gray-800 flex items-center gap-2">
-            <User className="w-5 h-5" />
-            Right-to-Represent Status
-          </h3>
-          {rtrInfo.signed ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-green-700 font-semibold">
-                <CheckCircle className="w-5 h-5" />
-                Signed by Candidate
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-green-200 space-y-2 text-sm">
-                <p>
-                  <span className="font-medium text-gray-700">Name:</span>{' '}
-                  {rtrInfo.candidate_name || 'Candidate'}
-                </p>
-                <p>
-                  <span className="font-medium text-gray-700">Email:</span>{' '}
-                  {rtrInfo.candidate_email || 'N/A'}
-                </p>
-                {rtrInfo.signed_at && (
-                  <p className="flex items-center gap-2 text-gray-600">
-                    <Clock className="w-4 h-4" />
-                    <span className="font-medium">Signed at:</span>{' '}
-                    {new Date(rtrInfo.signed_at).toLocaleString()}
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600" />
-              <div>
-                <p className="font-semibold text-amber-900">Not Yet Signed</p>
-                <p className="text-sm text-amber-700">
-                  Waiting for candidate signature
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Commission Info Section */}
-      {commission ? (
+      {/* Commission Info Section - FROM PROPOSAL */}
+      {commission && (
         <div className="px-6 py-4 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-200">
           <h3 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-600" />
@@ -509,15 +382,8 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
           </div>
           <div className="mt-4 p-3 bg-emerald-100 rounded-lg border border-emerald-300">
             <p className="text-xs text-emerald-900 font-semibold">
-              ✅ Based on your accepted commission proposal
+              ✅ Based on your accepted commission proposal from the hiring manager
             </p>
-          </div>
-        </div>
-      ) : (
-        <div className="px-6 py-4 bg-amber-50 border-b border-amber-200">
-          <div className="flex items-center gap-2 text-amber-700">
-            <AlertCircle className="w-5 h-5" />
-            <p className="text-sm font-medium">Commission information not available</p>
           </div>
         </div>
       )}
@@ -630,7 +496,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
       </div>
 
       {/* Send to Hiring Manager */}
-      {summary.status !== 'sent' && hiringManagers.length > 0 && (
+      {summary.status !== 'sent' && (
         <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
           <h3 className="text-lg font-semibold mb-3 text-gray-800">
             Send to Hiring Manager
@@ -639,21 +505,29 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Hiring Manager
             </label>
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="font-semibold text-gray-900">
-                {hiringManagers[0].full_name}
-              </p>
-              <p className="text-sm text-gray-600">{hiringManagers[0].email}</p>
-              <input
-                type="hidden"
-                value={selectedHM}
-                onChange={(e) => setSelectedHM(e.target.value)}
-              />
-            </div>
+            {hiringManagers.length > 0 ? (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="font-semibold text-gray-900">
+                  {hiringManagers[0].full_name}
+                </p>
+                <p className="text-sm text-gray-600">{hiringManagers[0].email}</p>
+                <input
+                  type="hidden"
+                  value={selectedHM}
+                  onChange={(e) => setSelectedHM(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-sm text-amber-700 font-medium">
+                  ⚠️ No hiring manager found for this job posting
+                </p>
+              </div>
+            )}
           </div>
           <button
             onClick={handleSendSummary}
-            disabled={sending}
+            disabled={sending || hiringManagers.length === 0}
             className="w-full px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 font-medium inline-flex items-center justify-center gap-2"
           >
             {sending ? (
