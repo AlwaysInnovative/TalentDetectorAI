@@ -10,6 +10,7 @@ import {
   Send,
   CheckCircle,
   AlertCircle,
+  DollarSign,
 } from 'lucide-react'
 
 interface SummaryCardProps {
@@ -27,6 +28,7 @@ interface CandidateSummary {
   candidate_id: string
   job_id: string
   agency_id: string
+  hiring_manager_id?: string
   executive_summary: string
   skills_match: {
     matched_skills: string[]
@@ -56,8 +58,23 @@ interface HiringManager {
   full_name: string
 }
 
+interface JobData {
+  id: string
+  posted_by: string
+  salary_max?: number
+  salary_min?: number
+  title?: string
+}
+
+interface CommissionInfo {
+  estimated_commission: number
+  consolidated_amount: number
+  salary_range: string
+}
+
 export const SummaryCard: React.FC<SummaryCardProps> = ({
   interestId,
+  jobId,
   agencyId,
   onSent,
   onError,
@@ -70,6 +87,9 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [commission, setCommission] = useState<CommissionInfo | null>(null)
+
+  const supabase = createClient()
 
   useEffect(() => {
     const loadSummary = async () => {
@@ -93,31 +113,61 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     loadSummary()
   }, [interestId, onError])
 
+  // Load hiring manager from job posting
   useEffect(() => {
-    const loadHiringManagers = async () => {
-      if (!agencyId) return
+    const loadJobAndHiringManager = async () => {
+      if (!jobId) return
 
       try {
-        const supabase = createClient()
-        const { data, error } = await supabase
+        // Fetch job details
+        const { data: jobData, error: jobError } = await supabase
+          .from('jobs')
+          .select('id, posted_by, salary_min, salary_max, title')
+          .eq('id', jobId)
+          .single()
+
+        if (jobError || !jobData) {
+          console.error('Error fetching job:', jobError)
+          return
+        }
+
+        console.log('✅ Job data loaded:', jobData)
+
+        // Fetch hiring manager who posted the job
+        const { data: hmData, error: hmError } = await supabase
           .from('profiles')
           .select('id, email, full_name')
-          .eq('agency_id', agencyId)
-          .in('role', ['hiring_manager', 'manager', 'hm'])
+          .eq('id', jobData.posted_by)
+          .single()
 
-        if (!error && data) {
-          setHiringManagers(data)
-          if (data.length > 0) {
-            setSelectedHM(data[0].id)
-          }
+        if (hmError || !hmData) {
+          console.error('Error fetching hiring manager:', hmError)
+          return
         }
+
+        console.log('✅ Hiring Manager loaded:', hmData)
+
+        setHiringManagers([hmData])
+        setSelectedHM(hmData.id)
+
+        // Calculate commission
+        const salaryMin = jobData.salary_min || 0
+        const salaryMax = jobData.salary_max || 0
+        const estimatedCommission = Math.round((salaryMax + salaryMin) / 2 * 0.15) // 15% commission
+        const consolidatedAmount = salaryMin + salaryMax
+
+        setCommission({
+          estimated_commission: estimatedCommission,
+          consolidated_amount: consolidatedAmount,
+          salary_range: `£${salaryMin.toLocaleString()} - £${salaryMax.toLocaleString()}`,
+        })
       } catch (err) {
-        console.error('Error loading hiring managers:', err)
+        console.error('Error loading job and hiring manager:', err)
       }
     }
 
-    loadHiringManagers()
-  }, [agencyId])
+    loadJobAndHiringManager()
+  }, [jobId, supabase])
 
   const handleGenerateSummary = async () => {
     setGenerating(true)
@@ -258,6 +308,42 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         </div>
       </div>
 
+      {/* Commission Info Section */}
+      {commission && (
+        <div className="px-6 py-4 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-200">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-emerald-600" />
+            Commission Information
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white p-4 rounded-lg border border-emerald-200">
+              <p className="text-xs text-gray-600 font-medium mb-1">
+                Salary Range
+              </p>
+              <p className="text-lg font-bold text-emerald-700">
+                {commission.salary_range}
+              </p>
+            </div>
+            <div className="bg-white p-4 rounded-lg border border-emerald-200">
+              <p className="text-xs text-gray-600 font-medium mb-1">
+                Estimated Commission (15%)
+              </p>
+              <p className="text-lg font-bold text-emerald-700">
+                £{commission.estimated_commission.toLocaleString()}
+              </p>
+            </div>
+            <div className="bg-white p-4 rounded-lg border border-emerald-200 col-span-2">
+              <p className="text-xs text-gray-600 font-medium mb-1">
+                Consolidated Amount (Total Salary Range)
+              </p>
+              <p className="text-lg font-bold text-emerald-700">
+                £{commission.consolidated_amount.toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Executive Summary */}
       <div className="px-6 py-4">
         <h3 className="text-lg font-semibold mb-3 text-gray-800">
@@ -373,24 +459,31 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
           </h3>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Hiring Manager
+              Hiring Manager
             </label>
-            <select
-              value={selectedHM}
-              onChange={(e) => setSelectedHM(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Select a hiring manager --</option>
-              {hiringManagers.map((hm) => (
-                <option key={hm.id} value={hm.id}>
-                  {hm.full_name} ({hm.email})
-                </option>
-              ))}
-            </select>
+            {hiringManagers.length > 0 ? (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="font-semibold text-gray-900">
+                  {hiringManagers[0].full_name}
+                </p>
+                <p className="text-sm text-gray-600">{hiringManagers[0].email}</p>
+                <input
+                  type="hidden"
+                  value={selectedHM}
+                  onChange={(e) => setSelectedHM(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-sm text-amber-700 font-medium">
+                  ⚠️ No hiring manager found for this job posting
+                </p>
+              </div>
+            )}
           </div>
           <button
             onClick={handleSendSummary}
-            disabled={sending || !selectedHM}
+            disabled={sending || hiringManagers.length === 0}
             className="w-full px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 font-medium inline-flex items-center justify-center gap-2"
           >
             {sending ? (
@@ -405,6 +498,24 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
               </>
             )}
           </button>
+        </div>
+      )}
+
+      {/* Summary Sent Status */}
+      {summary.status === 'sent' && (
+        <div className="px-6 py-4 border-t border-gray-200 bg-green-50">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-5 h-5 text-green-600" />
+            <div>
+              <p className="font-semibold text-green-900">Summary Sent</p>
+              <p className="text-sm text-green-700">
+                Sent to {hiringManagers[0]?.full_name || 'hiring manager'} on{' '}
+                {summary.sent_to_hm_at
+                  ? new Date(summary.sent_to_hm_at).toLocaleDateString()
+                  : 'Unknown date'}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
