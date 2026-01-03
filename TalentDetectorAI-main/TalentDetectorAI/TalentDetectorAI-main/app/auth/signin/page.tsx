@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import Image from 'next/image'
-import { Brain } from 'lucide-react'
+import { Brain, AlertCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 const backgroundImages = [
@@ -34,10 +34,47 @@ export default function SignIn() {
     
     try {
       const supabase = createClient()
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       
-      if (error) throw error
-      if (!data.user) throw new Error('No user data')
+      console.log('🔐 Attempting sign in for:', email)
+      
+      const { data, error } = await supabase.auth.signInWithPassword({ 
+        email, 
+        password 
+      })
+      
+      console.log('📊 Sign in response:', { data, error })
+
+      if (error) {
+        console.error('❌ Sign in error:', error.message)
+        
+        // Check if it's an unconfirmed email error
+        if (error.message.includes('Email not confirmed') || 
+            error.message.includes('unconfirmed') ||
+            error.status === 422) {
+          toast.error('Please verify your email before logging in. Check your inbox for the verification link.')
+          setLoading(false)
+          return
+        }
+        
+        throw error
+      }
+
+      if (!data.user) {
+        throw new Error('No user data')
+      }
+
+      // Check if email is confirmed
+      console.log('📧 Email confirmed at:', data.user.email_confirmed_at)
+      
+      if (!data.user.email_confirmed_at) {
+        console.warn('⚠️ User email not confirmed yet')
+        toast.error('Please verify your email before logging in. Check your inbox for the verification link.')
+        setLoading(false)
+        return
+      }
+
+      console.log('✅ Sign in successful!')
+      console.log('✅ Email verified!')
       
       const userRole = data.user.user_metadata?.role || 'manager'
       toast.success('Welcome back!')
@@ -54,6 +91,7 @@ export default function SignIn() {
       }, 1000)
       
     } catch (error: any) {
+      console.error('❌ Error:', error)
       toast.error(error.message || 'Sign in failed')
       setLoading(false)
     }
@@ -75,18 +113,40 @@ export default function SignIn() {
           <form onSubmit={handleSignIn} className="space-y-6">
             <div>
               <label className="block text-sm font-semibold mb-2">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                className="input" required disabled={loading} />
+              <input 
+                type="email" 
+                value={email} 
+                onChange={e => setEmail(e.target.value)}
+                className="input" 
+                required 
+                disabled={loading} 
+              />
             </div>
             <div>
               <label className="block text-sm font-semibold mb-2">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                className="input" required disabled={loading} />
+              <input 
+                type="password" 
+                value={password} 
+                onChange={e => setPassword(e.target.value)}
+                className="input" 
+                required 
+                disabled={loading} 
+              />
             </div>
             <button type="submit" disabled={loading} className="w-full btn-primary">
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
+
+          {/* Email Verification Notice */}
+          <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-amber-800">
+                <strong>Note:</strong> You must verify your email before signing in. Check your inbox for the verification link if you just registered.
+              </div>
+            </div>
+          </div>
 
           <p className="text-center mt-6">
             <Link href="/auth/signup" className="text-primary-600 font-semibold">Sign up</Link>
