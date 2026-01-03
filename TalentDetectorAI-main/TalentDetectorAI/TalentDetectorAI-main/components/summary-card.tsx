@@ -58,28 +58,11 @@ interface HiringManager {
   full_name: string
 }
 
-interface JobData {
-  id: string
-  posted_by: string
-  salary_max?: number
-  salary_min?: number
-  title?: string
-}
-
 interface CommissionInfo {
   estimated_commission: number
   consolidated_amount: number
   salary_range: string
   commission_percentage: number
-}
-
-interface CommissionConfig {
-  id: string
-  agency_id: string
-  commission_percentage: number
-  min_salary_threshold?: number
-  max_salary_threshold?: number
-  is_active: boolean
 }
 
 export const SummaryCard: React.FC<SummaryCardProps> = ({
@@ -123,14 +106,14 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     loadSummary()
   }, [interestId, onError])
 
-  // Load hiring manager from job posting and calculate dynamic commission
+  // Load hiring manager from job and commission from proposal
   useEffect(() => {
-    const loadJobAndCommission = async () => {
+    const loadJobCommissionAndHM = async () => {
       if (!jobId || !agencyId) return
 
       try {
         console.log('🔍 Fetching job:', jobId)
-        
+
         // Fetch job details
         const { data: jobData, error: jobError } = await supabase
           .from('jobs')
@@ -161,23 +144,29 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         setHiringManagers([hmData])
         setSelectedHM(hmData.id)
 
-        // Fetch commission configuration for the agency
-        console.log('🔍 Fetching commission config for agency:', agencyId)
-        
-        const { data: commissionConfig, error: commissionError } = await supabase
-          .from('commission_settings')
-          .select('*')
-          .eq('agency_id', agencyId)
-          .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single()
+        // Fetch commission proposal for this job and agency
+        console.log('🔍 Fetching commission proposal...')
 
-        if (commissionError) {
-          console.warn('⚠️ No commission config found, using default 15%:', commissionError)
+        const { data: proposalData, error: proposalError } = await supabase
+          .from('commission_proposals')
+          .select('agreed_percentage, manager_percentage')
+          .eq('job_id', jobId)
+          .eq('agency_id', agencyId)
+          .eq('status', 'accepted')
+          .order('agreed_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (proposalError) {
+          console.warn('⚠️ Error fetching proposal:', proposalError)
         }
 
-        const commissionPercentage = commissionConfig?.commission_percentage ?? 15
+        // Use agreed_percentage from proposal, fallback to manager_percentage, then default to 15
+        const commissionPercentage = proposalData?.agreed_percentage 
+          ? parseFloat(proposalData.agreed_percentage as unknown as string)
+          : proposalData?.manager_percentage 
+          ? parseFloat(proposalData.manager_percentage as unknown as string)
+          : 15
 
         console.log('💰 Commission percentage:', commissionPercentage)
 
@@ -185,54 +174,30 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         const salaryMin = jobData.salary_min || 0
         const salaryMax = jobData.salary_max || 0
         const averageSalary = (salaryMin + salaryMax) / 2
-        
-        // Check salary thresholds if configured
-        let applicableCommissionPercentage = commissionPercentage
-        
-        if (commissionConfig) {
-          if (
-            commissionConfig.min_salary_threshold &&
-            averageSalary < commissionConfig.min_salary_threshold
-          ) {
-            console.log(
-              '⚠️ Salary below minimum threshold, commission may not apply'
-            )
-            applicableCommissionPercentage = 0
-          }
-          if (
-            commissionConfig.max_salary_threshold &&
-            averageSalary > commissionConfig.max_salary_threshold
-          ) {
-            console.log(
-              '⚠️ Salary exceeds maximum threshold, applying max percentage'
-            )
-            applicableCommissionPercentage = commissionConfig.commission_percentage
-          }
-        }
 
         const estimatedCommission = Math.round(
-          averageSalary * (applicableCommissionPercentage / 100)
+          averageSalary * (commissionPercentage / 100)
         )
         const consolidatedAmount = salaryMin + salaryMax
 
         console.log('💰 Commission calculated:', {
           estimatedCommission,
           consolidatedAmount,
-          applicableCommissionPercentage,
+          commissionPercentage,
         })
 
         setCommission({
           estimated_commission: estimatedCommission,
           consolidated_amount: consolidatedAmount,
           salary_range: `£${salaryMin.toLocaleString()} - £${salaryMax.toLocaleString()}`,
-          commission_percentage: applicableCommissionPercentage,
+          commission_percentage: commissionPercentage,
         })
       } catch (err) {
         console.error('Error loading job and commission:', err)
       }
     }
 
-    loadJobAndCommission()
+    loadJobCommissionAndHM()
   }, [jobId, agencyId, supabase])
 
   const handleGenerateSummary = async () => {
@@ -374,7 +339,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         </div>
       </div>
 
-      {/* Commission Info Section - DYNAMIC */}
+      {/* Commission Info Section - FROM PROPOSAL */}
       {commission && (
         <div className="px-6 py-4 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-200">
           <h3 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
@@ -414,6 +379,11 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
                 £{commission.consolidated_amount.toLocaleString()}
               </p>
             </div>
+          </div>
+          <div className="mt-4 p-3 bg-emerald-100 rounded-lg border border-emerald-300">
+            <p className="text-xs text-emerald-900 font-semibold">
+              ✅ Based on your accepted commission proposal from the hiring manager
+            </p>
           </div>
         </div>
       )}
