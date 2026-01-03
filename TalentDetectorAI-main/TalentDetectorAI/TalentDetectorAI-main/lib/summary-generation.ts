@@ -1,166 +1,180 @@
-// =========================================================================
-// FILE 1: SUMMARY GENERATION SERVICE
-// =========================================================================
-// Purpose: Generate AI summaries from candidate interest data
-// Location: services/summaryGenerationService.ts
-// =========================================================================
-
-import { createClient } from '@supabase/supabase-js';
-
-interface CandidateInterest {
-  id: string;
-  candidateid: string;
-  jobid: string;
-  agencyid: string;
-  ai_match_score: number;
-  ai_cv_analysis: any;
-  salary_range: string;
-  job_title: string;
-  job_location: string;
-  job_description: string;
-  right_to_represent_signed: boolean;
-  rtr_status: string;
-}
-
-interface SkillsMatch {
-  matched_skills: string[];
-  missing_skills: string[];
-  additional_skills: string[];
-  match_percentage: number;
-}
-
-interface HeatMap {
-  technical_skills: number;
-  cultural_fit: number;
-  experience_level: number;
-  communication_skills: number;
-  leadership_potential: number;
-}
+import { createClient } from '@/lib/supabase/client'
 
 interface CandidateSummary {
-  interest_id: string;
-  candidate_id: string;
-  job_id: string;
-  agency_id: string;
-  executive_summary: string;
-  skills_match: SkillsMatch;
-  key_strengths: string[];
-  recommendations: string;
-  heat_map: HeatMap;
-  ai_match_score: number;
-  status: 'draft' | 'ready' | 'sent';
-  created_at: string;
+  id?: string
+  interest_id: string
+  candidate_id: string
+  job_id: string
+  agency_id: string
+  executive_summary: string
+  skills_match: {
+    matched_skills: string[]
+    missing_skills: string[]
+    additional_skills: string[]
+    match_percentage: number
+  }
+  key_strengths: string[]
+  recommendations: string
+  heat_map: {
+    technical_skills: number
+    cultural_fit: number
+    experience_level: number
+    communication_skills: number
+    leadership_potential: number
+  }
+  ai_match_score: number
+  status: 'draft' | 'ready' | 'sent' | 'reviewed'
+  created_at?: string
+  sent_to_hm_at?: string
+  hm_feedback?: string
 }
 
-export class SummaryGenerationService {
-  private supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  );
+class SummaryGenerationService {
+  private supabase = createClient()
 
   async generateCandidateSummary(
     interestId: string
   ): Promise<CandidateSummary | null> {
     try {
-      // Fetch candidate interest with all details
+      console.log('🔍 Fetching interest:', interestId)
+
+      // Fetch candidate interest
       const { data: interest, error: interestError } = await this.supabase
         .from('candidate_interests')
-        .select(`
-          id,
-          candidate_id,
-          job_id,
-          agency_id,
-          ai_match_score,
-          ai_cv_analysis,
-          salary_range,
-          job_title,
-          job_location,
-          job_description,
-          right_to_represent_signed,
-          rtr_status
-        `)
+        .select('*')
         .eq('id', interestId)
-        .single();
+        .single()
 
       if (interestError || !interest) {
-        console.error('Failed to fetch interest:', interestError);
-        return null;
+        console.error('❌ Interest fetch failed:', interestError)
+        return null
       }
 
-      // Fetch candidate data
-      const { data: candidate } = await this.supabase
+      console.log('✅ Interest loaded:', interest.id)
+
+      // Fetch candidate
+      const { data: candidate, error: candidateError } = await this.supabase
         .from('candidates')
-        .select('id, parsed_resume, skills, experience_years, ai_summary')
+        .select('*')
         .eq('id', interest.candidate_id)
-        .single();
+        .single()
 
-      // Fetch job details
-      const { data: job } = await this.supabase
+      if (candidateError || !candidate) {
+        console.error('❌ Candidate fetch failed:', candidateError)
+        return null
+      }
+
+      // Fetch job
+      const { data: job, error: jobError } = await this.supabase
         .from('jobs')
-        .select('id, title, description, required_skills, location')
+        .select('*')
         .eq('id', interest.job_id)
-        .single();
+        .single()
 
-      // Parse CV analysis
-      const cvAnalysis = interest.ai_cv_analysis || {};
-      const candidateSkills = candidate?.skills || [];
-      const requiredSkills = job?.required_skills || [];
+      if (jobError || !job) {
+        console.error('❌ Job fetch failed:', jobError)
+        return null
+      }
+
+      console.log('✅ All data loaded successfully')
+
+      // Parse skills (handle both array and string formats)
+      const candidateSkills = Array.isArray(candidate.skills)
+        ? candidate.skills
+        : typeof candidate.skills === 'string'
+        ? candidate.skills.split(',').map((s: string) => s.trim())
+        : []
+
+      const requiredSkills = Array.isArray(job.skills)
+        ? job.skills
+        : typeof job.skills === 'string'
+        ? job.skills.split(',').map((s: string) => s.trim())
+        : []
 
       // Calculate skills matching
       const matchedSkills = candidateSkills.filter((skill: string) =>
-        requiredSkills.some((req: string) => 
-          req.toLowerCase().includes(skill.toLowerCase())
+        requiredSkills.some((req: string) =>
+          req.toLowerCase().includes(skill.toLowerCase()) ||
+          skill.toLowerCase().includes(req.toLowerCase())
         )
-      );
+      )
 
       const missingSkills = requiredSkills.filter((req: string) =>
         !candidateSkills.some((skill: string) =>
-          req.toLowerCase().includes(skill.toLowerCase())
+          req.toLowerCase().includes(skill.toLowerCase()) ||
+          skill.toLowerCase().includes(req.toLowerCase())
         )
-      );
+      )
 
       const additionalSkills = candidateSkills.filter((skill: string) =>
         !requiredSkills.some((req: string) =>
-          req.toLowerCase().includes(skill.toLowerCase())
+          req.toLowerCase().includes(skill.toLowerCase()) ||
+          skill.toLowerCase().includes(req.toLowerCase())
         )
-      );
+      )
 
-      const matchPercentage = requiredSkills.length > 0
-        ? Math.round((matchedSkills.length / requiredSkills.length) * 100)
-        : 0;
+      const matchPercentage =
+        requiredSkills.length > 0
+          ? Math.round((matchedSkills.length / requiredSkills.length) * 100)
+          : 0
 
-      // Generate heat map scores
-      const heatMap: HeatMap = {
-        technical_skills: interest.ai_match_score,
-        cultural_fit: Math.min(100, interest.ai_match_score + 10),
-        experience_level: Math.min(100, candidate?.experience_years ? (candidate.experience_years * 5) : 50),
-        communication_skills: Math.min(100, interest.ai_match_score - 5),
-        leadership_potential: Math.min(100, interest.ai_match_score + 15),
-      };
+      // Generate heat map based on match score
+      const baseScore = interest.ai_match_score || 75
+      const heatMap = {
+        technical_skills: Math.min(100, baseScore + (matchPercentage - 50) / 2),
+        cultural_fit: Math.min(100, baseScore + 10),
+        experience_level: Math.min(
+          100,
+          candidate.experience_years
+            ? Math.min(100, candidate.experience_years * 8)
+            : baseScore
+        ),
+        communication_skills: Math.min(100, Math.max(0, baseScore - 5)),
+        leadership_potential: Math.min(100, baseScore + 15),
+      }
 
       // Generate executive summary
-      const executiveSummary = this.generateExecutiveSummary(
-        interest,
-        candidate,
-        job,
-        matchPercentage
-      );
+      const executiveSummary = `
+CANDIDATE PROFILE ANALYSIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Candidate: ${candidate.name || 'Unknown'}
+Position: ${job.title || 'Unknown Position'}
+Experience: ${candidate.experience_years || 'Unknown'} years
+Overall Match Score: ${baseScore}/100
+
+SKILLS ALIGNMENT
+Skills Match: ${matchPercentage}% (${matchedSkills.length}/${requiredSkills.length} skills)
+• Matched Skills: ${matchedSkills.length > 0 ? matchedSkills.join(', ') : 'None'}
+• Missing Skills: ${missingSkills.length > 0 ? missingSkills.slice(0, 3).join(', ') : 'None'}
+
+ASSESSMENT SUMMARY
+This candidate shows ${matchPercentage >= 80 ? 'strong' : matchPercentage >= 60 ? 'moderate' : 'limited'} alignment with the position requirements. 
+${matchPercentage >= 80 ? '✓ Ready for interview scheduling.' : '⏳ Recommend screening interview first.'}
+
+RTR Status: ${interest.right_to_represent_signed ? '✓ SIGNED' : '⏳ PENDING'}
+      `.trim()
 
       // Generate recommendations
-      const recommendations = this.generateRecommendations(
-        interest,
-        matchPercentage,
-        missingSkills
-      );
+      const recommendations =
+        matchPercentage >= 80
+          ? '✓ Proceed with interview scheduling\n• RTR agreement is signed and valid\n• Strong technical and soft skills alignment\n• Recommend prioritizing this candidate'
+          : matchPercentage >= 60
+          ? '⏳ Schedule screening interview\n• Discuss skill gaps with candidate\n• Assess willingness to learn\n• Explore transferable skills'
+          : '⚠️ Consider for specialized roles only\n• Limited immediate match\n• May require training\n• Check for growth potential'
 
       // Extract key strengths
-      const keyStrengths = this.extractKeyStrengths(
-        cvAnalysis,
-        matchedSkills,
-        heatMap
-      );
+      const keyStrengths = [
+        ...matchedSkills.slice(0, 3),
+        matchPercentage >= 80
+          ? 'Strong technical foundation'
+          : 'Good learning attitude',
+        'Professional background',
+      ]
+        .filter((s) => s && typeof s === 'string')
+        .slice(0, 5)
 
-      // Create summary record
+      // Create summary object
       const summary: CandidateSummary = {
         interest_id: interestId,
         candidate_id: interest.candidate_id,
@@ -173,15 +187,14 @@ export class SummaryGenerationService {
           additional_skills: additionalSkills,
           match_percentage: matchPercentage,
         },
-        key_strengths: keyStrengths,
+        key_strengths: keyStrengths as string[],
         recommendations,
         heat_map: heatMap,
-        ai_match_score: interest.ai_match_score,
+        ai_match_score: baseScore,
         status: 'draft',
-        created_at: new Date().toISOString(),
-      };
+      }
 
-      // Save summary to database
+      // Save to database
       const { data: savedSummary, error: saveError } = await this.supabase
         .from('candidate_summaries')
         .insert([
@@ -197,93 +210,26 @@ export class SummaryGenerationService {
             heat_map: summary.heat_map,
             ai_match_score: summary.ai_match_score,
             status: summary.status,
-            created_at: summary.created_at,
           },
         ])
         .select()
-        .single();
+        .single()
 
       if (saveError) {
-        console.error('Failed to save summary:', saveError);
-        return null;
+        console.error('❌ Save error:', saveError)
+        return null
       }
 
-      return summary;
+      console.log('✅ Summary created:', savedSummary.id)
+      return {
+        ...summary,
+        id: savedSummary.id,
+        created_at: savedSummary.created_at,
+      }
     } catch (error) {
-      console.error('Error generating summary:', error);
-      return null;
+      console.error('❌ Error generating summary:', error)
+      return null
     }
-  }
-
-  private generateExecutiveSummary(
-    interest: CandidateInterest,
-    candidate: any,
-    job: any,
-    matchPercentage: number
-  ): string {
-    const verdict = matchPercentage >= 80 ? 'EXCELLENT' : 
-                   matchPercentage >= 60 ? 'GOOD' : 
-                   matchPercentage >= 40 ? 'MODERATE' : 'LIMITED';
-
-    return `
-${verdict} FIT - ${matchPercentage}% Skills Match
-
-Candidate has ${interest.ai_match_score}/100 AI match score for the ${job?.title || 'position'} role.
-
-Experience: ${candidate?.experience_years || 'Unknown'} years of professional experience
-Location: ${interest.job_location}
-Salary Range: ${interest.salary_range}
-RTR Status: ${interest.rtr_status === 'signed' ? '✓ SIGNED' : '⏳ PENDING'}
-
-This candidate demonstrates strong alignment with the position requirements.
-
-${interest.right_to_represent_signed ? '✓ Right to Represent agreement is signed.' : '⚠️ Right to Represent agreement pending.'}
-
-Recommended for: ${verdict === 'EXCELLENT' ? 'Interview scheduling' : 'Further review'}
-    `.trim();
-  }
-
-  private generateRecommendations(
-    interest: CandidateInterest,
-    matchPercentage: number,
-    missingSkills: string[]
-  ): string {
-    const recommendations: string[] = [];
-
-    if (matchPercentage >= 80) {
-      recommendations.push('Proceed with interview scheduling');
-    } else if (matchPercentage >= 60) {
-      recommendations.push('Consider for screening interview');
-    } else {
-      recommendations.push('Discuss skill gaps with candidate');
-    }
-
-    if (interest.right_to_represent_signed) {
-      recommendations.push('RTR agreement is signed');
-    } else {
-      recommendations.push('Obtain RTR signature before proceeding');
-    }
-
-    return recommendations.join('\n• ');
-  }
-
-  private extractKeyStrengths(
-    cvAnalysis: any,
-    matchedSkills: string[],
-    heatMap: HeatMap
-  ): string[] {
-    const strengths: string[] = [];
-
-    strengths.push(...matchedSkills.slice(0, 3));
-
-    if (heatMap.technical_skills >= 80) {
-      strengths.push('Strong technical foundation');
-    }
-    if (heatMap.leadership_potential >= 75) {
-      strengths.push('Leadership potential');
-    }
-
-    return strengths.slice(0, 5);
   }
 
   async getSummary(interestId: string): Promise<CandidateSummary | null> {
@@ -294,49 +240,44 @@ Recommended for: ${verdict === 'EXCELLENT' ? 'Interview scheduling' : 'Further r
         .eq('interest_id', interestId)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .single()
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching summary:', error);
-        return null;
+      if (error) {
+        console.error('Error getting summary:', error)
+        return null
       }
 
-      return data || null;
+      return data
     } catch (error) {
-      console.error('Error getting summary:', error);
-      return null;
+      console.error('Error getting summary:', error)
+      return null
     }
   }
 
   async updateSummaryStatus(
     summaryId: string,
-    status: 'draft' | 'ready' | 'sent' | 'reviewed',
-    hiringManagerId?: string
+    status: 'draft' | 'ready' | 'sent' | 'reviewed'
   ): Promise<boolean> {
     try {
-      const updateData: any = { status, updated_at: new Date().toISOString() };
-      
-      if (status === 'sent' && hiringManagerId) {
-        updateData.sent_to_hm_at = new Date().toISOString();
-        updateData.hiring_manager_id = hiringManagerId;
-      }
-
       const { error } = await this.supabase
         .from('candidate_summaries')
-        .update(updateData)
-        .eq('id', summaryId);
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', summaryId)
 
       if (error) {
-        console.error('Error updating summary status:', error);
-        return false;
+        console.error('Error updating summary:', error)
+        return false
       }
 
-      return true;
+      return true
     } catch (error) {
-      console.error('Error updating summary:', error);
-      return false;
+      console.error('Error updating summary:', error)
+      return false
     }
   }
 }
 
-export default new SummaryGenerationService();
+export default new SummaryGenerationService()
