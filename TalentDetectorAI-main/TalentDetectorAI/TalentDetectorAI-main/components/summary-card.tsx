@@ -557,7 +557,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
                 {summary.sent_to_hm_at
                   ? new Date(summary.sent_to_hm_at).toLocaleDateString()
                   : 'Unknown date'}
-              </p>
+              </p> 
             </div>
           </div>
         </div>
