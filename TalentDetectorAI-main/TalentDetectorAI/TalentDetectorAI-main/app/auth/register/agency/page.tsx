@@ -38,6 +38,8 @@ export default function AgencyRegister() {
     try {
       const supabase = createClient()
       
+      console.log('📝 Attempting signup for:', formData.email)
+      
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
@@ -50,9 +52,31 @@ export default function AgencyRegister() {
         }
       })
 
-      if (authError) throw authError
-      if (!authData.user) throw new Error('Registration failed')
+      console.log('📊 Signup response:', { authData, authError })
 
+      if (authError) {
+        console.error('❌ Auth error:', authError.message)
+        throw authError
+      }
+
+      // Handle both confirmed and unconfirmed users
+      if (!authData.user) {
+        console.error('❌ No user returned from signup')
+        throw new Error('Registration failed - no user created')
+      }
+
+      console.log('✅ User created:', authData.user.id)
+      console.log('✅ User email confirmed:', authData.user.email_confirmed_at !== null)
+      console.log('ℹ️  Session:', authData.session ? 'Active' : 'Pending email confirmation')
+
+      // Important: User exists but CANNOT log in until email is verified
+      // Only create profile - don't sign in yet
+      // User will be able to log in only after confirming email
+
+      // Create profile for the unconfirmed user
+      // This profile will be available once user confirms email
+      console.log('🔍 Creating profile for unconfirmed user...')
+      
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
@@ -60,15 +84,29 @@ export default function AgencyRegister() {
           email: formData.email,
           full_name: formData.fullName,
           company: formData.company,
-          role: 'agency'
+          role: 'agency',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         })
 
       if (profileError) {
-        console.error('Profile creation error:', profileError)
-        throw profileError
+        console.error('⚠️ Profile creation error:', profileError)
+        
+        // If profile fails but user was created, it's okay
+        // User can still log in after confirming email
+        if (profileError.code !== '23505') {
+          // Only throw if it's not a unique constraint error
+          throw profileError
+        }
+      } else {
+        console.log('✅ Profile created successfully')
       }
 
+      console.log('📧 Verification email sent to:', formData.email)
+      console.log('⏳ User must verify email before login is possible')
+
       // Show success screen
+      // User will receive email and must click link to verify
       setShowSuccess(true)
       
     } catch (error: any) {
@@ -131,7 +169,10 @@ export default function AgencyRegister() {
                   </p>
                   <p className="font-bold text-blue-600 mb-3">{formData.email}</p>
                   <p className="text-sm text-blue-800">
-                    Please check your inbox and click the verification link to activate your account.
+                    <strong>Please check your inbox and click the verification link to activate your account.</strong>
+                  </p>
+                  <p className="text-sm text-blue-800 mt-2">
+                    You won't be able to log in until you verify your email.
                   </p>
                 </div>
               </div>
@@ -195,7 +236,7 @@ export default function AgencyRegister() {
     )
   }
 
-  // Registration Form (same as before but cleaner)
+  // Registration Form
   return (
     <div className="min-h-screen relative overflow-hidden bg-gray-900">
       <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1600880292203-757bb62b4baf?w=1920&q=80)', filter: 'brightness(0.3) blur(2px)' }} />
