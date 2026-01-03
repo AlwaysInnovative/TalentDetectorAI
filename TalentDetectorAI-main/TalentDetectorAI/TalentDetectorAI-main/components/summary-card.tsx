@@ -70,6 +70,16 @@ interface CommissionInfo {
   estimated_commission: number
   consolidated_amount: number
   salary_range: string
+  commission_percentage: number
+}
+
+interface CommissionConfig {
+  id: string
+  agency_id: string
+  commission_percentage: number
+  min_salary_threshold?: number
+  max_salary_threshold?: number
+  is_active: boolean
 }
 
 export const SummaryCard: React.FC<SummaryCardProps> = ({
@@ -113,12 +123,14 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     loadSummary()
   }, [interestId, onError])
 
-  // Load hiring manager from job posting
+  // Load hiring manager from job posting and calculate dynamic commission
   useEffect(() => {
-    const loadJobAndHiringManager = async () => {
-      if (!jobId) return
+    const loadJobAndCommission = async () => {
+      if (!jobId || !agencyId) return
 
       try {
+        console.log('🔍 Fetching job:', jobId)
+        
         // Fetch job details
         const { data: jobData, error: jobError } = await supabase
           .from('jobs')
@@ -146,28 +158,82 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         }
 
         console.log('✅ Hiring Manager loaded:', hmData)
-
         setHiringManagers([hmData])
         setSelectedHM(hmData.id)
 
-        // Calculate commission
+        // Fetch commission configuration for the agency
+        console.log('🔍 Fetching commission config for agency:', agencyId)
+        
+        const { data: commissionConfig, error: commissionError } = await supabase
+          .from('commission_settings')
+          .select('*')
+          .eq('agency_id', agencyId)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+
+        if (commissionError) {
+          console.warn('⚠️ No commission config found, using default 15%:', commissionError)
+        }
+
+        const commissionPercentage = commissionConfig?.commission_percentage ?? 15
+
+        console.log('💰 Commission percentage:', commissionPercentage)
+
+        // Calculate commission based on salary range
         const salaryMin = jobData.salary_min || 0
         const salaryMax = jobData.salary_max || 0
-        const estimatedCommission = Math.round((salaryMax + salaryMin) / 2 * 0.15) // 15% commission
+        const averageSalary = (salaryMin + salaryMax) / 2
+        
+        // Check salary thresholds if configured
+        let applicableCommissionPercentage = commissionPercentage
+        
+        if (commissionConfig) {
+          if (
+            commissionConfig.min_salary_threshold &&
+            averageSalary < commissionConfig.min_salary_threshold
+          ) {
+            console.log(
+              '⚠️ Salary below minimum threshold, commission may not apply'
+            )
+            applicableCommissionPercentage = 0
+          }
+          if (
+            commissionConfig.max_salary_threshold &&
+            averageSalary > commissionConfig.max_salary_threshold
+          ) {
+            console.log(
+              '⚠️ Salary exceeds maximum threshold, applying max percentage'
+            )
+            applicableCommissionPercentage = commissionConfig.commission_percentage
+          }
+        }
+
+        const estimatedCommission = Math.round(
+          averageSalary * (applicableCommissionPercentage / 100)
+        )
         const consolidatedAmount = salaryMin + salaryMax
+
+        console.log('💰 Commission calculated:', {
+          estimatedCommission,
+          consolidatedAmount,
+          applicableCommissionPercentage,
+        })
 
         setCommission({
           estimated_commission: estimatedCommission,
           consolidated_amount: consolidatedAmount,
           salary_range: `£${salaryMin.toLocaleString()} - £${salaryMax.toLocaleString()}`,
+          commission_percentage: applicableCommissionPercentage,
         })
       } catch (err) {
-        console.error('Error loading job and hiring manager:', err)
+        console.error('Error loading job and commission:', err)
       }
     }
 
-    loadJobAndHiringManager()
-  }, [jobId, supabase])
+    loadJobAndCommission()
+  }, [jobId, agencyId, supabase])
 
   const handleGenerateSummary = async () => {
     setGenerating(true)
@@ -308,7 +374,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         </div>
       </div>
 
-      {/* Commission Info Section */}
+      {/* Commission Info Section - DYNAMIC */}
       {commission && (
         <div className="px-6 py-4 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-200">
           <h3 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
@@ -326,15 +392,23 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
             </div>
             <div className="bg-white p-4 rounded-lg border border-emerald-200">
               <p className="text-xs text-gray-600 font-medium mb-1">
-                Estimated Commission (15%)
+                Commission Rate
+              </p>
+              <p className="text-lg font-bold text-emerald-700">
+                {commission.commission_percentage}%
+              </p>
+            </div>
+            <div className="bg-white p-4 rounded-lg border border-emerald-200">
+              <p className="text-xs text-gray-600 font-medium mb-1">
+                Estimated Commission
               </p>
               <p className="text-lg font-bold text-emerald-700">
                 £{commission.estimated_commission.toLocaleString()}
               </p>
             </div>
-            <div className="bg-white p-4 rounded-lg border border-emerald-200 col-span-2">
+            <div className="bg-white p-4 rounded-lg border border-emerald-200">
               <p className="text-xs text-gray-600 font-medium mb-1">
-                Consolidated Amount (Total Salary Range)
+                Consolidated Amount
               </p>
               <p className="text-lg font-bold text-emerald-700">
                 £{commission.consolidated_amount.toLocaleString()}
