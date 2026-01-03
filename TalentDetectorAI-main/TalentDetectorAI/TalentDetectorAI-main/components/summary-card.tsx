@@ -9,7 +9,7 @@ import {
   Zap,
   Send,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react'
 
 interface SummaryCardProps {
@@ -21,7 +21,7 @@ interface SummaryCardProps {
   onError?: (error: string) => void
 }
 
-interface Summary {
+interface CandidateSummary {
   id: string
   interest_id: string
   candidate_id: string
@@ -58,13 +58,11 @@ interface HiringManager {
 
 export const SummaryCard: React.FC<SummaryCardProps> = ({
   interestId,
-  candidateId,
-  jobId,
   agencyId,
   onSent,
   onError,
 }) => {
-  const [summary, setSummary] = useState<Summary | null>(null)
+  const [summary, setSummary] = useState<CandidateSummary | null>(null)
   const [hiringManagers, setHiringManagers] = useState<HiringManager[]>([])
   const [selectedHM, setSelectedHM] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -77,12 +75,11 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     const loadSummary = async () => {
       setLoading(true)
       try {
-        const existingSummary = await summaryGenerationService.getSummary(
-          interestId
-        )
+        const existingSummary =
+          await summaryGenerationService.getSummary(interestId)
 
         if (existingSummary) {
-          setSummary(existingSummary as Summary)
+          setSummary(existingSummary)
         }
       } catch (err) {
         console.error('Error loading summary:', err)
@@ -102,13 +99,13 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
 
       try {
         const supabase = createClient()
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
           .select('id, email, full_name')
           .eq('agency_id', agencyId)
-          .in('role', ['hiring_manager', 'manager'])
+          .in('role', ['hiring_manager', 'manager', 'hm'])
 
-        if (data) {
+        if (!error && data) {
           setHiringManagers(data)
           if (data.length > 0) {
             setSelectedHM(data[0].id)
@@ -128,12 +125,11 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
     setSuccess(null)
 
     try {
-      const newSummary = await summaryGenerationService.generateCandidateSummary(
-        interestId
-      )
+      const newSummary =
+        await summaryGenerationService.generateCandidateSummary(interestId)
 
       if (newSummary) {
-        setSummary(newSummary as Summary)
+        setSummary(newSummary as CandidateSummary)
         setSuccess('✅ Summary generated successfully')
       } else {
         setError('Failed to generate summary')
@@ -212,7 +208,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
           <button
             onClick={handleGenerateSummary}
             disabled={generating}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-bold flex items-center gap-2 mx-auto"
+            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-bold inline-flex items-center gap-2"
           >
             {generating ? (
               <>
@@ -248,19 +244,17 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
       {/* Status */}
       <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
         <div className="flex items-center justify-between">
-          <div>
-            <span
-              className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                summary.status === 'sent'
-                  ? 'bg-green-100 text-green-800'
-                  : summary.status === 'ready'
-                  ? 'bg-blue-100 text-blue-800'
-                  : 'bg-yellow-100 text-yellow-800'
-              }`}
-            >
-              {summary.status.charAt(0).toUpperCase() + summary.status.slice(1)}
-            </span>
-          </div>
+          <span
+            className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
+              summary.status === 'sent'
+                ? 'bg-green-100 text-green-800'
+                : summary.status === 'ready'
+                ? 'bg-blue-100 text-blue-800'
+                : 'bg-yellow-100 text-yellow-800'
+            }`}
+          >
+            {summary.status.charAt(0).toUpperCase() + summary.status.slice(1)}
+          </span>
         </div>
       </div>
 
@@ -269,7 +263,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         <h3 className="text-lg font-semibold mb-3 text-gray-800">
           Executive Summary
         </h3>
-        <div className="bg-blue-50 p-4 rounded border border-blue-200 whitespace-pre-wrap text-sm text-gray-700">
+        <div className="bg-blue-50 p-4 rounded border border-blue-200 whitespace-pre-wrap text-sm text-gray-700 font-mono">
           {summary.executive_summary}
         </div>
       </div>
@@ -366,8 +360,8 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
         <h3 className="text-lg font-semibold mb-3 text-gray-800">
           Recommendations
         </h3>
-        <div className="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap">
-          • {summary.recommendations.split('\n• ').join('\n• ')}
+        <div className="bg-gray-50 p-4 rounded text-sm text-gray-700 whitespace-pre-wrap font-mono">
+          {summary.recommendations}
         </div>
       </div>
 
@@ -397,7 +391,7 @@ export const SummaryCard: React.FC<SummaryCardProps> = ({
           <button
             onClick={handleSendSummary}
             disabled={sending || !selectedHM}
-            className="w-full px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 font-medium flex items-center justify-center gap-2"
+            className="w-full px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 font-medium inline-flex items-center justify-center gap-2"
           >
             {sending ? (
               <>
