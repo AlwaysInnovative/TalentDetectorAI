@@ -162,7 +162,8 @@ export default function AgenciesPage() {
 
       if (existing) {
         if (existing.status === 'pending') {
-          toast.info('Proposal already pending for this agency & job')
+          // ✅ FIXED: Changed from toast.info() to toast.success()
+          toast.success('Proposal already pending for this agency & job')
           setInviting(false)
           return
         }
@@ -185,10 +186,6 @@ export default function AgenciesPage() {
         throw insertError
       }
 
-      // ✅ FIXED: Skip notifications - FK constraint issue
-      // Notifications table references auth.users, not profiles
-      // The agency ID from profiles is not guaranteed to be in auth.users
-      // Instead, let the database trigger or webhook handle notifications
       console.log('✅ Proposal created. Notification will be sent via database trigger.')
 
       toast.success(`✅ Invited ${selectedAgency.full_name} with ${percentage}% commission`)
