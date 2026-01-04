@@ -25,24 +25,29 @@ const fetcher = async () => {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
   if (sessionError || !session?.user?.id) {
+    console.warn('⚠️ No session found')
     return { agencies: [], jobs: [], proposals: [] }
   }
 
   const managerId = session.user.id
+  console.log('✅ Fetching for manager:', managerId)
 
   const [agenciesRes, jobsRes, proposalsRes] = await Promise.all([
+    // ✅ FIXED: role='agency' NOT 'manager'
     supabase
       .from('profiles')
       .select('*')
-      .eq('role', 'manager')
+      .eq('role', 'agency')
       .order('created_at', { ascending: false }),
 
+    // ✅ Jobs for this manager
     supabase
       .from('jobs')
       .select('*')
       .eq('manager_id', managerId)
       .eq('status', 'open'),
 
+    // ✅ Commission proposals for this manager
     supabase
       .from('commissionproposals')
       .select(
@@ -55,10 +60,20 @@ const fetcher = async () => {
       .eq('managerid', managerId),
   ])
 
+  const agencies = agenciesRes.data || []
+  const jobs = jobsRes.data || []
+  const proposals = proposalsRes.data || []
+
+  console.log('✅ Data fetched:', {
+    agencies: agencies.length,
+    jobs: jobs.length,
+    proposals: proposals.length,
+  })
+
   return {
-    agencies: agenciesRes.data || [],
-    jobs: jobsRes.data || [],
-    proposals: proposalsRes.data || [],
+    agencies,
+    jobs,
+    proposals,
   }
 }
 
@@ -66,6 +81,7 @@ export default function AgenciesPage() {
   const { data, mutate, isLoading } = useSWR('manager-agencies', fetcher, {
     refreshInterval: 5000,
     revalidateOnFocus: true,
+    revalidateOnReconnect: true,
   })
 
   const [selectedAgency, setSelectedAgency] = useState<any>(null)
@@ -74,11 +90,12 @@ export default function AgenciesPage() {
   const [inviting, setInviting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
+  // ✅ Real-time updates
   useEffect(() => {
     const supabase = createClient()
 
     const channel = supabase
-      .channel('profiles-agencies')
+      .channel('profiles-changes')
       .on(
         'postgres_changes',
         {
@@ -88,6 +105,7 @@ export default function AgenciesPage() {
           filter: 'role=eq.agency',
         },
         () => {
+          console.log('🔔 Agencies updated via realtime')
           mutate()
         },
       )
@@ -100,7 +118,9 @@ export default function AgenciesPage() {
 
   async function handleRefresh() {
     setRefreshing(true)
+    console.log('🔄 Manual refresh triggered')
     await mutate()
+    toast.success('Refreshed!')
     setRefreshing(false)
   }
 
@@ -117,15 +137,23 @@ export default function AgenciesPage() {
 
       if (sessionError || !session?.user?.id) {
         toast.error('Session expired. Please sign in again.')
+        setInviting(false)
         return
       }
 
       const managerId = session.user.id
 
-      // Prevent duplicate pending proposals (aligns with idxcommissionproposalsunique)
+      console.log('📤 Sending invite:', {
+        jobId: selectedJob,
+        agencyId: selectedAgency.id,
+        managerId,
+        percentage,
+      })
+
+      // ✅ Check for existing proposal
       const { data: existing, error: existingError } = await supabase
         .from('commissionproposals')
-        .select('id,status')
+        .select('id, status')
         .eq('managerid', managerId)
         .eq('agencyid', selectedAgency.id)
         .eq('jobid', selectedJob)
@@ -135,11 +163,19 @@ export default function AgenciesPage() {
         throw existingError
       }
 
-      if (existing && existing.status === 'pending') {
-        toast.success('A pending proposal already exists for this agency and job.')
-        return
+      if (existing) {
+        if (existing.status === 'pending') {
+          toast.info('Proposal already pending for this agency & job')
+          setInviting(false)
+          return
+        }
+        // Allow re-proposing if rejected
+        if (existing.status === 'rejected') {
+          console.log('♻️ Re-proposing after rejection')
+        }
       }
 
+      // ✅ Insert proposal
       const { error: insertError } = await supabase.from('commissionproposals').insert({
         jobid: selectedJob,
         agencyid: selectedAgency.id,
@@ -149,57 +185,40 @@ export default function AgenciesPage() {
       })
 
       if (insertError) {
+        console.error('❌ Insert error:', insertError)
         throw insertError
       }
 
-      await supabase.from('notifications').insert({
+      // ✅ Send notification
+      const { error: notifyError } = await supabase.from('notifications').insert({
         userid: selectedAgency.id,
         type: 'commission_proposal',
         title: 'New Job Proposal',
-        message: `You’ve received a ${percentage}% commission proposal.`,
-        data: { jobid: selectedJob, managerid: managerId },
+        message: `You've received a ${percentage}% commission proposal for ${data?.jobs?.find((j: any) => j.id === selectedJob)?.title}`,
+        data: { jobid: selectedJob, managerid: managerId, percentage },
       })
 
-      toast.success('Invitation sent to agency.')
+      if (notifyError) {
+        console.error('⚠️ Notification error (non-critical):', notifyError)
+      }
+
+      toast.success(`✅ Invited ${selectedAgency.full_name} with ${percentage}% commission`)
       setSelectedAgency(null)
       setSelectedJob('')
       setPercentage(15)
       await mutate()
     } catch (error: any) {
+      console.error('💥 Error:', error)
       toast.error(error.message || 'Failed to send invite')
     } finally {
       setInviting(false)
     }
   }
 
-  async function handleProposalResponse(proposalId: string, action: 'accept') {
-    try {
-      const supabase = createClient()
-      const proposal = data?.proposals.find((p: any) => p.id === proposalId)
-
-      const { error } = await supabase
-        .from('commissionproposals')
-        .update({
-          status: 'accepted',
-          agreedpercentage: proposal?.managerpercentage,
-          agreedat: new Date().toISOString(),
-        })
-        .eq('id', proposalId)
-
-      if (error) {
-        toast.error('Failed to accept proposal')
-      } else {
-        toast.success('Proposal accepted.')
-        await mutate()
-      }
-    } catch {
-      toast.error('Error updating proposal')
-    }
-  }
-
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="relative min-h-screen flex items-center justify-center">
+        <DynamicBackground page="agencies" />
         <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
       </div>
     )
@@ -209,184 +228,245 @@ export default function AgenciesPage() {
     <div className="relative min-h-screen p-8">
       <DynamicBackground page="agencies" />
 
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Agency Management</h1>
-          <p className="text-gray-600">
-            {data?.agencies?.length || 0} agencies • {data?.jobs?.length || 0} open jobs
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl font-bold shadow flex items-center gap-2"
-          >
-            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-          <Link href="/auth/register/agency" target="_blank">
-            <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg flex items-center gap-2">
-              <UserPlus className="w-5 h-5" /> Register New Agency
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">Agency Management</h1>
+            <p className="text-gray-600">
+              {data?.agencies?.length || 0} agencies • {data?.jobs?.length || 0} open jobs •{' '}
+              {data?.proposals?.length || 0} proposals
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl font-bold shadow hover:shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
             </button>
-          </Link>
+            <Link href="/auth/register/agency" target="_blank">
+              <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg flex items-center gap-2 hover:shadow-xl transition-all">
+                <UserPlus className="w-5 h-5" /> Register New Agency
+              </button>
+            </Link>
+          </div>
         </div>
-      </div>
 
-      <div className="grid lg:grid-cols-2 gap-8">
-        {/* Agencies list */}
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="w-6 h-6 text-blue-600" />
-              Agencies
-            </h2>
-            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
-              {data?.agencies?.length || 0}
-            </span>
+        {/* ✅ No Agencies Alert */}
+        {!data?.agencies?.length && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-2xl p-6 mb-8 shadow-xl border-l-4 border-white"
+          >
+            <div className="flex items-center gap-4">
+              <Building2 className="w-12 h-12 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-xl font-bold mb-1">No agencies registered yet</h3>
+                <p className="mb-2">
+                  Partner agencies can register using this link:
+                </p>
+                <code className="bg-white/20 px-3 py-1 rounded-lg font-mono text-sm block w-fit">
+                  yourdomain.com/auth/register/agency
+                </code>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Main Grid */}
+        <div className="grid lg:grid-cols-3 gap-8">
+          {/* Agencies List */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
+              <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                <Users className="w-6 h-6 text-blue-600" />
+                Partner Agencies ({data?.agencies?.length || 0})
+              </h2>
+
+              {data?.agencies?.length ? (
+                <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+                  {data.agencies.map((agency: any, index: number) => (
+                    <motion.div
+                      key={agency.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                      whileHover={{ scale: 1.01 }}
+                      onClick={() => setSelectedAgency(agency)}
+                      className={`p-6 rounded-xl border-2 cursor-pointer transition-all ${
+                        selectedAgency?.id === agency.id
+                          ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-300'
+                          : 'border-gray-200 bg-white hover:border-blue-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="w-14 h-14 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                          <Building2 className="w-8 h-8 text-white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-lg font-bold text-gray-900 truncate">
+                            {agency.full_name}
+                          </h3>
+                          <p className="text-sm text-gray-600 truncate">{agency.email}</p>
+                          {agency.company && (
+                            <p className="text-sm text-blue-600 mt-1 font-semibold">
+                              {agency.company}
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2">
+                            Registered {new Date(agency.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                        {selectedAgency?.id === agency.id && (
+                          <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                            <CheckCircle className="w-6 h-6 text-emerald-600" />
+                            <span className="text-xs font-bold text-emerald-600">Selected</span>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-16">
+                  <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                  <p className="text-lg text-gray-600 mb-2">No agencies registered</p>
+                  <p className="text-sm text-gray-500 mb-6">
+                    Share the registration link to get started
+                  </p>
+                  <Link href="/auth/register/agency" target="_blank">
+                    <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg flex items-center gap-2 mx-auto hover:shadow-xl transition-all">
+                      <Plus className="w-5 h-5" /> Register First Agency
+                    </button>
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
 
-          {data?.agencies?.length ? (
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-              {data.agencies.map((agency: any) => (
-                <motion.div
-                  key={agency.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  whileHover={{ scale: 1.02 }}
-                  onClick={() => setSelectedAgency(agency)}
-                  className={`bg-white rounded-xl p-6 shadow cursor-pointer border-2 transition ${
-                    selectedAgency?.id === agency.id
-                      ? 'border-blue-600 ring-2 ring-blue-600/20'
-                      : 'border-transparent hover:border-blue-200'
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                      <Building2 className="w-8 h-8 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-lg font-bold text-gray-900">{agency.full_name}</h3>
-                      <p className="text-sm text-gray-600">{agency.email}</p>
-                      {agency.company && (
-                        <p className="text-sm text-blue-600 mt-1 flex items-center gap-1">
-                          <Building2 className="w-4 h-4" />
-                          {agency.company}
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500 mt-1">
-                        Registered: {new Date(agency.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    {selectedAgency?.id === agency.id && (
-                      <div className="flex flex-col items-center gap-1">
-                        <UserCheck className="w-6 h-6 text-emerald-600" />
-                        <span className="text-xs font-bold text-emerald-600">Selected</span>
+          {/* ✅ Invite Panel */}
+          <div className="lg:sticky lg:top-8 h-fit">
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
+              <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                <Percent className="w-6 h-6 text-emerald-600" />
+                Send Invitation
+              </h2>
+
+              {selectedAgency ? (
+                <>
+                  {/* Selected Agency Preview */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border-2 border-blue-200"
+                  >
+                    <p className="text-xs text-blue-600 font-semibold mb-3 uppercase">
+                      Selected Agency
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                        <Building2 className="w-6 h-6 text-white" />
                       </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-blue-900 truncate">
+                          {selectedAgency.full_name}
+                        </p>
+                        <p className="text-xs text-blue-600 truncate">
+                          {selectedAgency.company}
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+
+                  {/* Job Selector */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-semibold text-gray-900 mb-2">
+                      Select Job *
+                    </label>
+                    <select
+                      value={selectedJob}
+                      onChange={(e) => setSelectedJob(e.target.value)}
+                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg font-semibold focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                    >
+                      <option value="">Choose a job...</option>
+                      {data?.jobs?.map((job: any) => (
+                        <option key={job.id} value={job.id}>
+                          {job.title} • {job.location}
+                        </option>
+                      ))}
+                    </select>
+                    {!data?.jobs?.length && (
+                      <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                        <AlertCircle className="w-4 h-4" />
+                        No open jobs.{' '}
+                        <Link
+                          href="/dashboard/manager/jobs/create"
+                          className="underline font-bold"
+                        >
+                          Create one
+                        </Link>
+                      </p>
                     )}
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-white rounded-xl p-10 text-center border-2 border-dashed border-gray-300">
-              <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-lg text-gray-600 mb-2">No agencies yet</p>
-              <p className="text-sm text-gray-500 mb-4">
-                Share the registration link with your partner agencies.
-              </p>
-              <Link href="/auth/register/agency" target="_blank">
-                <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow flex items-center gap-2 mx-auto">
-                  <Plus className="w-5 h-5" /> Register First Agency
-                </button>
-              </Link>
-            </div>
-          )}
-        </div>
 
-        {/* Invite panel */}
-        <div className="lg:sticky lg:top-6">
-          <div className="bg-white rounded-xl p-6 shadow border border-gray-200">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Percent className="w-6 h-6 text-emerald-600" />
-              Invite Agency to Job
-            </h2>
-
-            {selectedAgency ? (
-              <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
-                <p className="text-sm text-blue-900 font-semibold mb-2">Selected agency:</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                    <Building2 className="w-5 h-5 text-white" />
+                  {/* Commission Slider */}
+                  <div className="mb-8">
+                    <label className="block text-sm font-semibold text-gray-900 mb-3">
+                      Commission Rate
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <input
+                        type="range"
+                        min={5}
+                        max={30}
+                        step={1}
+                        value={percentage}
+                        onChange={(e) => setPercentage(parseInt(e.target.value))}
+                        className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold text-lg min-w-[60px] text-center">
+                        {percentage}%
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 mt-2">
+                      <span>5%</span>
+                      <span>30%</span>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-bold text-blue-700">{selectedAgency.full_name}</p>
-                    <p className="text-xs text-blue-700">{selectedAgency.company}</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-gray-500 mb-4 p-4 bg-gray-50 rounded-lg text-center">
-                Select an agency from the left list.
-              </p>
-            )}
 
-            <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2">Job *</label>
-              <select
-                value={selectedJob}
-                onChange={(e) => setSelectedJob(e.target.value)}
-                className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg"
-              >
-                <option value="">Choose a job...</option>
-                {data?.jobs?.map((job: any) => (
-                  <option key={job.id} value={job.id}>
-                    {job.title} — {job.location}
-                  </option>
-                ))}
-              </select>
-              {(!data?.jobs || data.jobs.length === 0) && (
-                <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" />
-                  No open jobs. <Link href="/dashboard/manager/jobs/create" className="underline">Create one first.</Link>
-                </p>
-              )}
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold mb-2">Commission (%)</label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min={5}
-                  max={30}
-                  value={percentage}
-                  onChange={(e) => setPercentage(parseInt(e.target.value))}
-                  className="flex-1"
-                />
-                <div className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold text-xl">
-                  {percentage}%
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleInviteAgency}
-              disabled={inviting || !selectedAgency || !selectedJob}
-              className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {inviting ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Sending...
+                  {/* Send Button */}
+                  <button
+                    onClick={handleInviteAgency}
+                    disabled={inviting || !selectedJob}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 hover:shadow-lg hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {inviting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-5 h-5" />
+                        Send {percentage}% Invite
+                      </>
+                    )}
+                  </button>
                 </>
               ) : (
-                <>
-                  <CheckCircle className="w-5 h-5" />
-                  Send Invite ({percentage}%)
-                </>
+                <div className="text-center py-12">
+                  <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                  <p className="text-gray-600 font-semibold mb-2">No agency selected</p>
+                  <p className="text-sm text-gray-500">
+                    Click any agency from the left to send an invitation
+                  </p>
+                </div>
               )}
-            </button>
+            </div>
           </div>
         </div>
       </div>
