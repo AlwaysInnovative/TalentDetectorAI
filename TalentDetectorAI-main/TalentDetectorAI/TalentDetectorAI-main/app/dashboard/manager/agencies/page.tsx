@@ -33,31 +33,31 @@ const fetcher = async () => {
   console.log('✅ Fetching for manager:', managerId)
 
   const [agenciesRes, jobsRes, proposalsRes] = await Promise.all([
-    // ✅ FIXED: role='agency' NOT 'manager'
+    // ✅ Fetch AGENCIES (role='agency')
     supabase
       .from('profiles')
       .select('*')
       .eq('role', 'agency')
       .order('created_at', { ascending: false }),
 
-    // ✅ Jobs for this manager
+    // ✅ Fetch OPEN JOBS
     supabase
       .from('jobs')
       .select('*')
       .eq('manager_id', managerId)
       .eq('status', 'open'),
 
-    // ✅ Commission proposals for this manager
+    // ✅ FIXED: commission_proposals (with underscore)
     supabase
-      .from('commissionproposals')
+      .from('commission_proposals')
       .select(
         `
         *,
-        profiles!commissionproposals_agencyid_fkey ( id, full_name, company, email ),
+        profiles!commission_proposals_agency_id_fkey ( id, full_name, company, email ),
         jobs ( id, title, location )
       `,
       )
-      .eq('managerid', managerId),
+      .eq('manager_id', managerId),
   ])
 
   const agencies = agenciesRes.data || []
@@ -152,14 +152,15 @@ export default function AgenciesPage() {
 
       // ✅ Check for existing proposal
       const { data: existing, error: existingError } = await supabase
-        .from('commissionproposals')
+        .from('commission_proposals')
         .select('id, status')
-        .eq('managerid', managerId)
-        .eq('agencyid', selectedAgency.id)
-        .eq('jobid', selectedJob)
+        .eq('manager_id', managerId)
+        .eq('agency_id', selectedAgency.id)
+        .eq('job_id', selectedJob)
         .maybeSingle()
 
       if (existingError && existingError.code !== 'PGRST116') {
+        console.error('❌ Error checking existing:', existingError)
         throw existingError
       }
 
@@ -169,18 +170,17 @@ export default function AgenciesPage() {
           setInviting(false)
           return
         }
-        // Allow re-proposing if rejected
         if (existing.status === 'rejected') {
           console.log('♻️ Re-proposing after rejection')
         }
       }
 
-      // ✅ Insert proposal
-      const { error: insertError } = await supabase.from('commissionproposals').insert({
-        jobid: selectedJob,
-        agencyid: selectedAgency.id,
-        managerid: managerId,
-        managerpercentage: percentage,
+      // ✅ FIXED: commission_proposals with underscore columns
+      const { error: insertError } = await supabase.from('commission_proposals').insert({
+        job_id: selectedJob,
+        agency_id: selectedAgency.id,
+        manager_id: managerId,
+        manager_percentage: percentage,
         status: 'pending',
       })
 
@@ -190,12 +190,13 @@ export default function AgenciesPage() {
       }
 
       // ✅ Send notification
+      const jobTitle = data?.jobs?.find((j: any) => j.id === selectedJob)?.title || 'Job'
       const { error: notifyError } = await supabase.from('notifications').insert({
-        userid: selectedAgency.id,
+        user_id: selectedAgency.id,
         type: 'commission_proposal',
         title: 'New Job Proposal',
-        message: `You've received a ${percentage}% commission proposal for ${data?.jobs?.find((j: any) => j.id === selectedJob)?.title}`,
-        data: { jobid: selectedJob, managerid: managerId, percentage },
+        message: `You've received a ${percentage}% commission proposal for ${jobTitle}`,
+        data: { job_id: selectedJob, manager_id: managerId, percentage },
       })
 
       if (notifyError) {
