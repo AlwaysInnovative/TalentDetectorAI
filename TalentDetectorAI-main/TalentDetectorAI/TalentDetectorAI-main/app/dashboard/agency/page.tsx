@@ -1,395 +1,309 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Building2,
-  UserCheck,
-  Percent,
-  Plus,
+  TrendingUp,
   Users,
-  Loader2,
-  UserPlus,
-  RefreshCw,
-  AlertCircle,
+  Briefcase,
+  DollarSign,
+  Award,
+  Clock,
+  Target,
+  Zap,
+  Brain,
+  Sparkles,
+  ArrowRight,
   CheckCircle,
+  AlertCircle,
+  Eye,
+  FileText,
 } from 'lucide-react'
-import DynamicBackground from '@/components/ui/DynamicBackground'
 import { motion } from 'framer-motion'
-import toast from 'react-hot-toast'
 import Link from 'next/link'
+import DynamicBackground from '@/components/ui/DynamicBackground'
 
 const fetcher = async () => {
   const supabase = createClient()
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+  const { data: { session } } = await supabase.auth.getSession()
+  const agencyId = session?.user?.id
 
-  if (sessionError || !session?.user?.id) {
-    return { agencies: [], jobs: [], proposals: [] }
-  }
+  if (!agencyId) return { proposals: [], interests: [] }
 
-  const managerId = session.user.id
-
-  const [agenciesRes, jobsRes, proposalsRes] = await Promise.all([
-    supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'manager')
-      .order('created_at', { ascending: false }),
-
-    supabase
-      .from('jobs')
-      .select('*')
-      .eq('manager_id', managerId)
-      .eq('status', 'open'),
-
+  const [proposalsRes, interestsRes] = await Promise.all([
     supabase
       .from('commissionproposals')
       .select(
         `
         *,
-        profiles!commissionproposals_agencyid_fkey ( id, full_name, company, email ),
-        jobs ( id, title, location )
+        jobs ( id, title, location, salarymin, salarymax, description )
       `,
       )
-      .eq('managerid', managerId),
+      .eq('agencyid', agencyId)
+      .order('createdat', { ascending: false }),
+
+    supabase
+      .from('candidateinterests')
+      .select('*, candidates(*), jobs(*)')
+      .eq('agencyid', agencyId)
+      .order('createdat', { ascending: false }),
   ])
 
   return {
-    agencies: agenciesRes.data || [],
-    jobs: jobsRes.data || [],
     proposals: proposalsRes.data || [],
+    interests: interestsRes.data || [],
   }
 }
 
-export default function AgenciesPage() {
-  const { data, mutate, isLoading } = useSWR('manager-agencies', fetcher, {
+export default function AgencyDashboard() {
+  const { data } = useSWR('agency-dashboard', fetcher, {
     refreshInterval: 5000,
-    revalidateOnFocus: true,
   })
 
-  const [selectedAgency, setSelectedAgency] = useState<any>(null)
-  const [selectedJob, setSelectedJob] = useState('')
-  const [percentage, setPercentage] = useState(15)
-  const [inviting, setInviting] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-
-  useEffect(() => {
-    const supabase = createClient()
-
-    const channel = supabase
-      .channel('profiles-agencies')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'profiles',
-          filter: 'role=eq.agency',
-        },
-        () => {
-          mutate()
-        },
-      )
-      .subscribe()
-
-    return () => {
-      channel.unsubscribe()
-    }
-  }, [mutate])
-
-  async function handleRefresh() {
-    setRefreshing(true)
-    await mutate()
-    setRefreshing(false)
+  const stats = {
+    activeJobs: data?.proposals?.filter((p: any) => p.status === 'accepted').length || 0,
+    totalCandidates: data?.interests?.length || 0,
+    cvsReceived: data?.interests?.filter((i: any) => i.cvurl).length || 0,
+    signedRtrs: data?.interests?.filter((i: any) => i.righttorepresentsigned).length || 0,
+    pendingResponses: data?.interests?.filter((i: any) => !i.candidaterespondedat).length || 0,
+    interested: data?.interests?.filter((i: any) => i.status === 'interested').length || 0,
+    avgMatchScore:
+      data?.interests?.length
+        ? Math.round(
+            data.interests.reduce(
+              (acc: number, i: any) => acc + (i.aimatchscore || 0),
+              0,
+            ) / data.interests.length,
+          )
+        : 0,
   }
 
-  async function handleInviteAgency() {
-    if (!selectedAgency || !selectedJob) {
-      toast.error('Select both agency and job')
-      return
-    }
-
-    setInviting(true)
-    try {
-      const supabase = createClient()
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-
-      if (sessionError || !session?.user?.id) {
-        toast.error('Session expired. Please sign in again.')
-        return
-      }
-
-      const managerId = session.user.id
-
-      // Prevent duplicate pending proposals (aligns with idxcommissionproposalsunique)
-      const { data: existing, error: existingError } = await supabase
-        .from('commissionproposals')
-        .select('id,status')
-        .eq('managerid', managerId)
-        .eq('agencyid', selectedAgency.id)
-        .eq('jobid', selectedJob)
-        .maybeSingle()
-
-      if (existingError && existingError.code !== 'PGRST116') {
-        throw existingError
-      }
-
-      if (existing && existing.status === 'pending') {
-        toast.success('A pending proposal already exists for this agency and job.')
-        return
-      }
-
-      const { error: insertError } = await supabase.from('commissionproposals').insert({
-        jobid: selectedJob,
-        agencyid: selectedAgency.id,
-        managerid: managerId,
-        managerpercentage: percentage,
-        status: 'pending',
-      })
-
-      if (insertError) {
-        throw insertError
-      }
-
-      await supabase.from('notifications').insert({
-        userid: selectedAgency.id,
-        type: 'commission_proposal',
-        title: 'New Job Proposal',
-        message: `You’ve received a ${percentage}% commission proposal.`,
-        data: { jobid: selectedJob, managerid: managerId },
-      })
-
-      toast.success('Invitation sent to agency.')
-      setSelectedAgency(null)
-      setSelectedJob('')
-      setPercentage(15)
-      await mutate()
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to send invite')
-    } finally {
-      setInviting(false)
-    }
-  }
-
-  async function handleProposalResponse(proposalId: string, action: 'accept') {
-    try {
-      const supabase = createClient()
-      const proposal = data?.proposals.find((p: any) => p.id === proposalId)
-
-      const { error } = await supabase
-        .from('commissionproposals')
-        .update({
-          status: 'accepted',
-          agreedpercentage: proposal?.managerpercentage,
-          agreedat: new Date().toISOString(),
-        })
-        .eq('id', proposalId)
-
-      if (error) {
-        toast.error('Failed to accept proposal')
-      } else {
-        toast.success('Proposal accepted.')
-        await mutate()
-      }
-    } catch {
-      toast.error('Error updating proposal')
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
-      </div>
-    )
-  }
+  const aiInsights = generateAIInsights(data?.interests || [])
+  const urgentActions = getUrgentActions(data?.interests || [])
+  const topCandidates = (data?.interests || [])
+    .filter((i: any) => i.aimatchscore)
+    .sort((a: any, b: any) => (b.aimatchscore || 0) - (a.aimatchscore || 0))
+    .slice(0, 5)
 
   return (
     <div className="relative min-h-screen p-8">
-      <DynamicBackground page="agencies" />
+      <DynamicBackground page="agency-dashboard" />
 
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Agency Management</h1>
-          <p className="text-gray-600">
-            {data?.agencies?.length || 0} agencies • {data?.jobs?.length || 0} open jobs
-          </p>
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3 flex items-center gap-3">
+            <Brain className="w-12 h-12 text-blue-600" />
+            AI Agency Dashboard
+          </h1>
+          <p className="text-xl text-gray-600">Powered by intelligent automation</p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl font-bold shadow flex items-center gap-2"
+
+        {/* AI insights banner */}
+        {aiInsights.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white rounded-2xl p-6 shadow-2xl"
           >
-            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-          <Link href="/auth/register/agency" target="_blank">
-            <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg flex items-center gap-2">
-              <UserPlus className="w-5 h-5" /> Register New Agency
-            </button>
-          </Link>
-        </div>
-      </div>
-
-      <div className="grid lg:grid-cols-2 gap-8">
-        {/* Agencies list */}
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="w-6 h-6 text-blue-600" />
-              Agencies
-            </h2>
-            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
-              {data?.agencies?.length || 0}
-            </span>
-          </div>
-
-          {data?.agencies?.length ? (
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-              {data.agencies.map((agency: any) => (
-                <motion.div
-                  key={agency.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  whileHover={{ scale: 1.02 }}
-                  onClick={() => setSelectedAgency(agency)}
-                  className={`bg-white rounded-xl p-6 shadow cursor-pointer border-2 transition ${
-                    selectedAgency?.id === agency.id
-                      ? 'border-blue-600 ring-2 ring-blue-600/20'
-                      : 'border-transparent hover:border-blue-200'
-                  }`}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                      <Building2 className="w-8 h-8 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-lg font-bold text-gray-900">{agency.full_name}</h3>
-                      <p className="text-sm text-gray-600">{agency.email}</p>
-                      {agency.company && (
-                        <p className="text-sm text-blue-600 mt-1 flex items-center gap-1">
-                          <Building2 className="w-4 h-4" />
-                          {agency.company}
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500 mt-1">
-                        Registered: {new Date(agency.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    {selectedAgency?.id === agency.id && (
-                      <div className="flex flex-col items-center gap-1">
-                        <UserCheck className="w-6 h-6 text-emerald-600" />
-                        <span className="text-xs font-bold text-emerald-600">Selected</span>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-white rounded-xl p-10 text-center border-2 border-dashed border-gray-300">
-              <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-lg text-gray-600 mb-2">No agencies yet</p>
-              <p className="text-sm text-gray-500 mb-4">
-                Share the registration link with your partner agencies.
-              </p>
-              <Link href="/auth/register/agency" target="_blank">
-                <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow flex items-center gap-2 mx-auto">
-                  <Plus className="w-5 h-5" /> Register First Agency
-                </button>
-              </Link>
-            </div>
-          )}
-        </div>
-
-        {/* Invite panel */}
-        <div className="lg:sticky lg:top-6">
-          <div className="bg-white rounded-xl p-6 shadow border border-gray-200">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <Percent className="w-6 h-6 text-emerald-600" />
-              Invite Agency to Job
-            </h2>
-
-            {selectedAgency ? (
-              <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
-                <p className="text-sm text-blue-900 font-semibold mb-2">Selected agency:</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                    <Building2 className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-blue-700">{selectedAgency.full_name}</p>
-                    <p className="text-xs text-blue-700">{selectedAgency.company}</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-gray-500 mb-4 p-4 bg-gray-50 rounded-lg text-center">
-                Select an agency from the left list.
-              </p>
-            )}
-
-            <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2">Job *</label>
-              <select
-                value={selectedJob}
-                onChange={(e) => setSelectedJob(e.target.value)}
-                className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg"
-              >
-                <option value="">Choose a job...</option>
-                {data?.jobs?.map((job: any) => (
-                  <option key={job.id} value={job.id}>
-                    {job.title} — {job.location}
-                  </option>
-                ))}
-              </select>
-              {(!data?.jobs || data.jobs.length === 0) && (
-                <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" />
-                  No open jobs. <Link href="/dashboard/manager/jobs/create" className="underline">Create one first.</Link>
-                </p>
-              )}
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold mb-2">Commission (%)</label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min={5}
-                  max={30}
-                  value={percentage}
-                  onChange={(e) => setPercentage(parseInt(e.target.value))}
-                  className="flex-1"
-                />
-                <div className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold text-xl">
-                  {percentage}%
+            <div className="flex items-start gap-4">
+              <Sparkles className="w-12 h-12 flex-shrink-0 animate-pulse" />
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-3">AI Insights & Recommendations</h3>
+                <div className="space-y-2">
+                  {aiInsights.map((insight, i) => (
+                    <motion.p
+                      key={i}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className="text-purple-100"
+                    >
+                      {insight}
+                    </motion.p>
+                  ))}
                 </div>
               </div>
             </div>
+          </motion.div>
+        )}
 
-            <button
-              onClick={handleInviteAgency}
-              disabled={inviting || !selectedAgency || !selectedJob}
-              className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+        {/* Urgent actions */}
+        {urgentActions.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="mb-8 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-2xl p-6 shadow-2xl"
+          >
+            <div className="flex items-start gap-4">
+              <AlertCircle className="w-12 h-12 flex-shrink-0 animate-bounce" />
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold mb-3">Urgent Actions Required</h3>
+                <div className="space-y-3">
+                  {urgentActions.map((action, i) => (
+                    <Link key={i} href={action.link}>
+                      <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        className="bg-white/20 backdrop-blur rounded-xl p-4 cursor-pointer hover:bg-white/30 transition"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-bold text-lg">{action.title}</p>
+                            <p className="text-amber-100 text-sm">{action.description}</p>
+                          </div>
+                          <ArrowRight className="w-6 h-6" />
+                        </div>
+                      </motion.div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Stats grid */}
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
+          <Link href="/dashboard/agency/jobs">
+            <motion.div
+              whileHover={{ scale: 1.05, y: -5 }}
+              className="bg-white rounded-2xl p-6 shadow-lg border-2 border-blue-200 hover:border-blue-400 cursor-pointer"
             >
-              {inviting ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="w-5 h-5" />
-                  Send Invite ({percentage}%)
-                </>
-              )}
-            </button>
-          </div>
+              <div className="flex items-center justify-between mb-3">
+                <Briefcase className="w-8 h-8 text-blue-600" />
+                <span className="text-4xl font-bold text-blue-600">{stats.activeJobs}</span>
+              </div>
+              <p className="text-gray-600 font-bold">Active Jobs</p>
+              <p className="text-xs text-gray-500 mt-1">Click to manage</p>
+            </motion.div>
+          </Link>
+
+          <Link href="/dashboard/agency/candidates">
+            <motion.div
+              whileHover={{ scale: 1.05, y: -5 }}
+              className="bg-white rounded-2xl p-6 shadow-lg border-2 border-green-200 hover:border-green-400 cursor-pointer"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <Users className="w-8 h-8 text-green-600" />
+                <span className="text-4xl font-bold text-green-600">{stats.totalCandidates}</span>
+              </div>
+              <p className="text-gray-600 font-bold">Total Candidates</p>
+              <p className="text-xs text-gray-500 mt-1">Click to view</p>
+            </motion.div>
+          </Link>
+
+          <Link href="/dashboard/agency/interests">
+            <motion.div
+              whileHover={{ scale: 1.05, y: -5 }}
+              className="bg-white rounded-2xl p-6 shadow-lg border-2 border-purple-200 hover:border-purple-400 cursor-pointer"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <FileText className="w-8 h-8 text-purple-600" />
+                <span className="text-4xl font-bold text-purple-600">{stats.cvsReceived}</span>
+              </div>
+              <p className="text-gray-600 font-bold">CVs Received</p>
+              <p className="text-xs text-gray-500 mt-1">Click to review</p>
+            </motion.div>
+          </Link>
+
+          <motion.div
+            whileHover={{ scale: 1.05, y: -5 }}
+            className="bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl p-6 shadow-lg text-white"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <Award className="w-8 h-8" />
+              <span className="text-4xl font-bold">{stats.avgMatchScore}</span>
+            </div>
+            <p className="font-bold">Avg AI Match</p>
+            <p className="text-xs text-emerald-100 mt-1">Quality indicator</p>
+          </motion.div>
         </div>
       </div>
     </div>
   )
+}
+
+function generateAIInsights(interests: any[]): string[] {
+  const insights: string[] = []
+  if (!interests.length) {
+    insights.push('Start sending opportunities to candidates to get AI insights.')
+    return insights
+  }
+
+  const highMatchCount = interests.filter((i) => (i.aimatchscore || 0) >= 85).length
+  const pendingResponses = interests.filter((i) => !i.candidaterespondedat && i.cvurl).length
+  const signedRtrsRaw = interests.filter((i) => i.righttorepresentsigned).length
+  const avgMatchScore = interests.length
+    ? Math.round(interests.reduce((acc, i) => acc + (i.aimatchscore || 0), 0) / interests.length)
+    : 0
+
+  const signedRtrs = signedRtrsRaw || 0
+
+  if (highMatchCount > 0) {
+    insights.push(
+      `You have ${highMatchCount} candidates with ≥85 match scores. Prioritize them for quick placements.`,
+    )
+  }
+  if (pendingResponses > 0) {
+    insights.push(
+      `${pendingResponses} candidates uploaded CVs but have not responded yet. Follow up within 24 hours.`,
+    )
+  }
+
+  if (avgMatchScore >= 80) {
+    insights.push(`Average match score is ${avgMatchScore}. Excellent candidate quality.`)
+  } else if (avgMatchScore >= 60) {
+    insights.push(`Average match score is ${avgMatchScore}. Consider refining targeting.`)
+  }
+
+  if (signedRtrs > 0) {
+    insights.push(
+      `${signedRtrs} RTRs signed. Remind remaining candidates to complete RTRs to avoid delays.`,
+    )
+  }
+
+  return insights
+}
+
+function getUrgentActions(interests: any[]) {
+  const actions: { title: string; description: string; link: string }[] = []
+
+  const needRtr = interests.filter(
+    (i) => (i.aimatchscore || 0) >= 85 && i.cvurl && !i.righttorepresenturl,
+  )
+  if (needRtr.length > 0) {
+    actions.push({
+      title: `${needRtr.length} high‑match candidates need RTR`,
+      description: 'Generate RTR documents and send for signature.',
+      link: '/dashboard/agency/interests',
+    })
+  }
+
+  const readyToSubmit = interests.filter(
+    (i) => i.righttorepresentsigned && i.status === 'interested' && (i.aimatchscore || 0) >= 75,
+  )
+  if (readyToSubmit.length > 0) {
+    actions.push({
+      title: `${readyToSubmit.length} candidates ready for submission`,
+      description: 'Submit them to hiring managers now.',
+      link: '/dashboard/agency/interests',
+    })
+  }
+
+  const staleResponses = interests.filter((i) => {
+    if (!i.createdat || i.candidaterespondedat) return false
+    const daysSince =
+      (Date.now() - new Date(i.createdat).getTime()) / (1000 * 60 * 60 * 24)
+    return daysSince >= 3
+  })
+  if (staleResponses.length > 0) {
+    actions.push({
+      title: `${staleResponses.length} opportunities need follow‑up`,
+      description: 'Candidates have not responded in 3+ days.',
+      link: '/dashboard/agency/interests',
+    })
+  }
+
+  return actions
 }
