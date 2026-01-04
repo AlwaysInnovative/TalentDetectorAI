@@ -1,8 +1,20 @@
 'use client'
+
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
-import { Building2, UserCheck, Percent, Plus, Users, Loader2, UserPlus, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react'
+import {
+  Building2,
+  UserCheck,
+  Percent,
+  Plus,
+  Users,
+  Loader2,
+  UserPlus,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle,
+} from 'lucide-react'
 import DynamicBackground from '@/components/ui/DynamicBackground'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -10,258 +22,374 @@ import Link from 'next/link'
 
 const fetcher = async () => {
   const supabase = createClient()
-  const { data: { session } } = await supabase.auth.getSession()
-  const userId = session?.user?.id
-  
-  if (!userId) throw new Error('No user session')
-  
-  console.log('✅ Fetching data for user:', userId)
-  
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+
+  if (sessionError || !session?.user?.id) {
+    return { agencies: [], jobs: [], proposals: [] }
+  }
+
+  const managerId = session.user.id
+
   const [agenciesRes, jobsRes, proposalsRes] = await Promise.all([
     supabase
       .from('profiles')
-      .select('*, user:auth.users(id)')
-      .eq('role', 'agency')
+      .select('*')
+      .eq('role', 'manager')
       .order('created_at', { ascending: false }),
+
     supabase
       .from('jobs')
       .select('*')
-      .eq('manager_id', userId)
+      .eq('manager_id', managerId)
       .eq('status', 'open'),
+
     supabase
-      .from('commission_proposals')
-      .select(`
+      .from('commissionproposals')
+      .select(
+        `
         *,
-        profiles!commission_proposals_agency_id_fkey(full_name, company, email),
-        jobs(title, location, salary_min, salary_max)
-      `)
-      .eq('manager_id', userId)
+        profiles!commissionproposals_agencyid_fkey ( id, full_name, company, email ),
+        jobs ( id, title, location )
+      `,
+      )
+      .eq('managerid', managerId),
   ])
-  
-  console.log('✅ Agencies:', agenciesRes.data?.length || 0)
-  console.log('✅ Jobs:', jobsRes.data?.length || 0)
-  console.log('✅ Proposals:', proposalsRes.data?.length || 0)
-  
+
   return {
     agencies: agenciesRes.data || [],
     jobs: jobsRes.data || [],
-    proposals: proposalsRes.data || []
+    proposals: proposalsRes.data || [],
   }
 }
 
-export default function ManagerAgenciesPage() {
-  const { data, mutate, error, isLoading } = useSWR('manager-agencies', fetcher, {
-    refreshInterval: 10000,
-    revalidateOnFocus: true
+export default function AgenciesPage() {
+  const { data, mutate, isLoading } = useSWR('manager-agencies', fetcher, {
+    refreshInterval: 5000,
+    revalidateOnFocus: true,
   })
-  
+
   const [selectedAgency, setSelectedAgency] = useState<any>(null)
   const [selectedJob, setSelectedJob] = useState('')
   const [percentage, setPercentage] = useState(15)
   const [inviting, setInviting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
-  const handleInviteAgency = async () => {
-    if (!selectedAgency?.id || !selectedJob) {
-      toast.error('Please select both agency and job')
+  useEffect(() => {
+    const supabase = createClient()
+
+    const channel = supabase
+      .channel('profiles-agencies')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: 'role=eq.agency',
+        },
+        () => {
+          mutate()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      channel.unsubscribe()
+    }
+  }, [mutate])
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await mutate()
+    setRefreshing(false)
+  }
+
+  async function handleInviteAgency() {
+    if (!selectedAgency || !selectedJob) {
+      toast.error('Select both agency and job')
       return
     }
 
     setInviting(true)
     try {
       const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const userId = session?.user?.id
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-      if (!userId) {
-        toast.error('Session expired. Please refresh.')
+      if (sessionError || !session?.user?.id) {
+        toast.error('Session expired. Please sign in again.')
         return
       }
 
-      // ✅ FIXED: UPSERT prevents 409 conflicts & FK violations
-      const { data: existing, error: checkError } = await supabase
-        .from('commission_proposals')
-        .select('id')
-        .eq('job_id', selectedJob)
-        .eq('agency_id', selectedAgency.id)
-        .eq('manager_id', userId)
+      const managerId = session.user.id
+
+      // Prevent duplicate pending proposals (aligns with idxcommissionproposalsunique)
+      const { data: existing, error: existingError } = await supabase
+        .from('commissionproposals')
+        .select('id,status')
+        .eq('managerid', managerId)
+        .eq('agencyid', selectedAgency.id)
+        .eq('jobid', selectedJob)
         .maybeSingle()
 
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError
+      if (existingError && existingError.code !== 'PGRST116') {
+        throw existingError
       }
 
-      if (existing) {
-        toast.success('✅ Proposal already exists!')
-        await mutate()
+      if (existing && existing.status === 'pending') {
+        toast.success('A pending proposal already exists for this agency and job.')
         return
       }
 
-      const { error } = await supabase
-        .from('commission_proposals')
-        .upsert({
-          job_id: selectedJob,
-          agency_id: selectedAgency.id,
-          manager_id: userId,
-          manager_percentage: percentage,
-          status: 'pending',
-          created_at: new Date().toISOString()
-        }, { 
-          onConflict: 'job_id,agency_id,manager_id',
-          ignoreDuplicates: true 
-        })
-
-      if (error) {
-        console.error('❌ Insert error:', error)
-        if (error.code === '23503') {
-          toast.error('User not found in auth.users. Contact support.')
-        } else if (error.code === '23505') {
-          toast.success('✅ Proposal already sent!')
-        } else {
-          toast.error(`Database error: ${error.message}`)
-        }
-        return
-      }
-
-      // Send notification
-      await supabase.from('notifications').upsert({
-        user_id: selectedAgency.id,
-        type: 'commission_proposal',
-        title: 'New Job Invitation',
-        message: `${percentage}% commission proposal from manager`,
-        data: { job_id: selectedJob, percentage }
+      const { error: insertError } = await supabase.from('commissionproposals').insert({
+        jobid: selectedJob,
+        agencyid: selectedAgency.id,
+        managerid: managerId,
+        managerpercentage: percentage,
+        status: 'pending',
       })
 
-      toast.success(`✅ Sent ${percentage}% invite to ${selectedAgency.full_name}!`)
+      if (insertError) {
+        throw insertError
+      }
+
+      await supabase.from('notifications').insert({
+        userid: selectedAgency.id,
+        type: 'commission_proposal',
+        title: 'New Job Proposal',
+        message: `You’ve received a ${percentage}% commission proposal.`,
+        data: { jobid: selectedJob, managerid: managerId },
+      })
+
+      toast.success('Invitation sent to agency.')
       setSelectedAgency(null)
       setSelectedJob('')
       setPercentage(15)
       await mutate()
-
     } catch (error: any) {
-      console.error('💥 Send invite error:', error)
       toast.error(error.message || 'Failed to send invite')
     } finally {
       setInviting(false)
     }
   }
 
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    await mutate()
-    toast.success('✅ Data refreshed!')
-    setRefreshing(false)
-  }
+  async function handleProposalResponse(proposalId: string, action: 'accept') {
+    try {
+      const supabase = createClient()
+      const proposal = data?.proposals.find((p: any) => p.id === proposalId)
 
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center p-12">
-          <AlertCircle className="w-24 h-24 text-red-500 mx-auto mb-8" />
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">Failed to load data</h2>
-          <p className="text-xl text-gray-600 mb-8">{error.message}</p>
-          <button 
-            onClick={handleRefresh}
-            className="px-8 py-4 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    )
+      const { error } = await supabase
+        .from('commissionproposals')
+        .update({
+          status: 'accepted',
+          agreedpercentage: proposal?.managerpercentage,
+          agreedat: new Date().toISOString(),
+        })
+        .eq('id', proposalId)
+
+      if (error) {
+        toast.error('Failed to accept proposal')
+      } else {
+        toast.success('Proposal accepted.')
+        await mutate()
+      }
+    } catch {
+      toast.error('Error updating proposal')
+    }
   }
 
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-16 h-16 animate-spin text-blue-600" />
+        <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen">
-      <DynamicBackground page="manager-agencies" />
-      
-      <div className="max-w-7xl mx-auto px-6 py-12">
-        {/* Header */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-12"
-        >
-          <div>
-            <h1 className="text-5xl md:text-6xl font-black bg-gradient-to-r from-gray-900 via-gray-800 to-black bg-clip-text text-transparent mb-4">
-              Agency Network
-            </h1>
-            <p className="text-2xl text-gray-600 font-semibold">
-              {data?.agencies.length || 0} agencies • {data?.jobs.length || 0} open jobs • {data?.proposals.length || 0} proposals
-            </p>
-          </div>
-          
-          <div className="flex flex-wrap gap-4">
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              onClick={handleRefresh}
-              disabled={refreshing || isLoading}
-              className="px-8 py-4 bg-white/80 backdrop-blur border border-gray-200 shadow-xl rounded-3xl font-bold text-lg hover:shadow-2xl transition-all flex items-center gap-3 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </motion.button>
-            
-            <Link href="/auth/register/agency" target="_blank" rel="noopener noreferrer">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                className="px-8 py-4 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white rounded-3xl font-bold text-lg shadow-2xl hover:shadow-3xl transition-all flex items-center gap-3"
-              >
-                <UserPlus className="w-6 h-6" />
-                New Agency
-              </motion.button>
-            </Link>
-          </div>
-        </motion.div>
+    <div className="relative min-h-screen p-8">
+      <DynamicBackground page="agencies" />
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white/70 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/50 hover:shadow-3xl transition-all"
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Agency Management</h1>
+          <p className="text-gray-600">
+            {data?.agencies?.length || 0} agencies • {data?.jobs?.length || 0} open jobs
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-xl font-bold shadow flex items-center gap-2"
           >
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center shadow-2xl">
-                <Users className="w-10 h-10 text-white" />
-              </div>
-              <div>
-                <p className="text-4xl font-black text-gray-900">{data?.agencies.length || 0}</p>
-                <p className="text-xl text-gray-600 font-semibold">Agencies</p>
-              </div>
+            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <Link href="/auth/register/agency" target="_blank">
+            <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow-lg flex items-center gap-2">
+              <UserPlus className="w-5 h-5" /> Register New Agency
+            </button>
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-8">
+        {/* Agencies list */}
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <Users className="w-6 h-6 text-blue-600" />
+              Agencies
+            </h2>
+            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
+              {data?.agencies?.length || 0}
+            </span>
+          </div>
+
+          {data?.agencies?.length ? (
+            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+              {data.agencies.map((agency: any) => (
+                <motion.div
+                  key={agency.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  whileHover={{ scale: 1.02 }}
+                  onClick={() => setSelectedAgency(agency)}
+                  className={`bg-white rounded-xl p-6 shadow cursor-pointer border-2 transition ${
+                    selectedAgency?.id === agency.id
+                      ? 'border-blue-600 ring-2 ring-blue-600/20'
+                      : 'border-transparent hover:border-blue-200'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-14 h-14 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
+                      <Building2 className="w-8 h-8 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-lg font-bold text-gray-900">{agency.full_name}</h3>
+                      <p className="text-sm text-gray-600">{agency.email}</p>
+                      {agency.company && (
+                        <p className="text-sm text-blue-600 mt-1 flex items-center gap-1">
+                          <Building2 className="w-4 h-4" />
+                          {agency.company}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        Registered: {new Date(agency.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    {selectedAgency?.id === agency.id && (
+                      <div className="flex flex-col items-center gap-1">
+                        <UserCheck className="w-6 h-6 text-emerald-600" />
+                        <span className="text-xs font-bold text-emerald-600">Selected</span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
             </div>
-          </motion.div>
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-white/70 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/50 hover:shadow-3xl transition-all"
-          >
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center shadow-2xl">
-                <Percent className="w-10 h-10 text-white" />
+          ) : (
+            <div className="bg-white rounded-xl p-10 text-center border-2 border-dashed border-gray-300">
+              <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-lg text-gray-600 mb-2">No agencies yet</p>
+              <p className="text-sm text-gray-500 mb-4">
+                Share the registration link with your partner agencies.
+              </p>
+              <Link href="/auth/register/agency" target="_blank">
+                <button className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-bold shadow flex items-center gap-2 mx-auto">
+                  <Plus className="w-5 h-5" /> Register First Agency
+                </button>
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {/* Invite panel */}
+        <div className="lg:sticky lg:top-6">
+          <div className="bg-white rounded-xl p-6 shadow border border-gray-200">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              <Percent className="w-6 h-6 text-emerald-600" />
+              Invite Agency to Job
+            </h2>
+
+            {selectedAgency ? (
+              <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
+                <p className="text-sm text-blue-900 font-semibold mb-2">Selected agency:</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
+                    <Building2 className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-blue-700">{selectedAgency.full_name}</p>
+                    <p className="text-xs text-blue-700">{selectedAgency.company}</p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <p className="text-4xl font-black text-gray-900">
-                  {data?.proposals?.filter((p: any) => p.status === 'pending').length || 0}
+            ) : (
+              <p className="text-gray-500 mb-4 p-4 bg-gray-50 rounded-lg text-center">
+                Select an agency from the left list.
+              </p>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2">Job *</label>
+              <select
+                value={selectedJob}
+                onChange={(e) => setSelectedJob(e.target.value)}
+                className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg"
+              >
+                <option value="">Choose a job...</option>
+                {data?.jobs?.map((job: any) => (
+                  <option key={job.id} value={job.id}>
+                    {job.title} — {job.location}
+                  </option>
+                ))}
+              </select>
+              {(!data?.jobs || data.jobs.length === 0) && (
+                <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" />
+                  No open jobs. <Link href="/dashboard/manager/jobs/create" className="underline">Create one first.</Link>
                 </p>
-                <p className="text-xl text-gray-600 font-semibold">Pending</p>
+              )}
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold mb-2">Commission (%)</label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min={5}
+                  max={30}
+                  value={percentage}
+                  onChange={(e) => setPercentage(parseInt(e.target.value))}
+                  className="flex-1"
+                />
+                <div className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold text-xl">
+                  {percentage}%
+                </div>
               </div>
             </div>
-          </motion.div>
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white/70 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/50 hover:shadow-3xl
+
+            <button
+              onClick={handleInviteAgency}
+              disabled={inviting || !selectedAgency || !selectedJob}
+              className="w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {inviting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-5 h-5" />
+                  Send Invite ({percentage}%)
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
